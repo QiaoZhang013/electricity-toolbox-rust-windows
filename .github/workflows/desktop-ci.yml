@@ -1,9 +1,11 @@
 name: Desktop checks
 on:
   pull_request:
+    branches: [development]
   push:
-    branches: [main, master, "codex/**"]
+    branches: [development, "codex/**"]
   workflow_dispatch:
+  workflow_call:
 env:
   PYTHONUTF8: "1"
   PYTHONIOENCODING: utf-8
@@ -21,6 +23,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'development' || github.ref }}
       - run: python3 packaging/tauri/version.py check --require-notes
       - uses: actions/setup-node@v4
         with:

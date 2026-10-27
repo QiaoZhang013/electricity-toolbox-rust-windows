@@ -2,6 +2,14 @@ name: Desktop release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      full_only:
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       tag:
@@ -19,7 +27,7 @@ env:
 permissions:
   contents: write
 concurrency:
-  group: desktop-release-${{ github.event.inputs.tag || github.ref_name }}
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
   prepare:
@@ -33,10 +41,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.ref }}
       - id: version
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python packaging/tauri/version.py check --tag "$RELEASE_TAG" --require-notes --release-notes release-notes.md --github-output "$GITHUB_OUTPUT"
       - id: draft
         env:
@@ -123,7 +131,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-          FULL_ONLY: ${{ github.event.inputs.full_only || 'false' }}
+          FULL_ONLY: ${{ inputs.full_only && 'true' || 'false' }}
         run: |
           python packaging/tauri/build_dmg.py desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/电力工具箱.app --output dist
           update_args=()

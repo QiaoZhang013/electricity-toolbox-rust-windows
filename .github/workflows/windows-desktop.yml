@@ -1,8 +1,14 @@
 name: Windows desktop
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [development, "codex/**"]
   pull_request:
+    branches: [development]
+  workflow_call:
+    inputs:
+      installer:
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       installer:
@@ -21,6 +27,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'development' || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
