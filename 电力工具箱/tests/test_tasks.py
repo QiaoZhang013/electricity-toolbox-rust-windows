@@ -308,10 +308,12 @@ class ProcessRunnerTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             pid_file = Path(directory) / "child.pid"
+            ready_file = pid_file.with_suffix(".ready")
             code = (
-                "import subprocess,sys,time; "
+                "import subprocess,sys,time; from pathlib import Path; "
                 "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
-                f"open({str(pid_file)!r},'w').write(str(p.pid)); time.sleep(30)"
+                f"Path({str(ready_file)!r}).write_text(str(p.pid)); "
+                f"Path({str(ready_file)!r}).replace({str(pid_file)!r}); time.sleep(30)"
             )
             token = CancellationToken()
             runner = ProcessRunner(terminate_timeout=0.5)
