@@ -13,6 +13,7 @@ from tkinter import ttk
 
 from toolbox_storage import data_path
 from toolbox_redaction import redact
+from toolbox_version import application_version
 
 
 class _LogBuffer:
@@ -186,14 +187,7 @@ class LogConsole(ttk.Frame):
             self.storage_error = f"日志未能保存：{exc}"
             if render:
                 self.notice.set(self.storage_error)
-        root = Path(__file__).resolve().parent
-        version = "未知"
-        for version_path in (root / "desktop/src-tauri/tauri.conf.json", root.parent / "manifest.json"):
-            try:
-                version = json.loads(version_path.read_text(encoding="utf-8"))["version"]
-                break
-            except (OSError, ValueError, KeyError):
-                continue
+        version = application_version()
         self.append(f"模块：{self.module}  版本：{version}  开始时间：{datetime.now():%Y-%m-%d %H:%M:%S}", render=render)
 
     def append(self, content: str, *, render=True):

@@ -160,6 +160,18 @@ class GitHubUpdater:
     def check(self) -> Release | None:
         if sys.platform == "win32":
             raise UpdateError("Windows 版暂使用安装包更新，请从项目发布页获取 Windows 安装程序。")
+        return self.check_release()
+
+    def parse_data(self, data):
+        return parse_release(data, self.current, self.repository)
+
+    def primary_asset_name(self, tag):
+        return f"ElectricityToolbox-{tag.removeprefix('v')}-apple-silicon.dmg"
+
+    def release_asset_names(self, tag):
+        return {self.primary_asset_name(tag), "update-manifest.json"}
+
+    def check_release(self):
         request = urllib.request.Request(
             f"https://api.github.com/repos/{self.repository}/releases/latest",
             headers={"Accept": "application/vnd.github+json", "User-Agent": f"ElectricityToolbox/{self.current}",
@@ -170,7 +182,7 @@ class GitHubUpdater:
                 if response.status != 200:
                     raise UpdateError(f"更新服务返回错误（HTTP {response.status}）")
                 data = json.loads(response.read(2 * 1024 * 1024))
-            return parse_release(data, self.current, self.repository)
+            return self.parse_data(data)
         except urllib.error.HTTPError as exc:
             if exc.code in {403, 429}:
                 try:
@@ -210,7 +222,7 @@ class GitHubUpdater:
             notes = "".join(read_html(response).notes).strip()
         with request(base + "/expanded_assets/" + tag) as response:
             assets = read_html(response).assets
-        names = {f"ElectricityToolbox-{tag.removeprefix('v')}-apple-silicon.dmg", "update-manifest.json"}
+        names = self.release_asset_names(tag)
         selected = []
         for asset in assets:
             if asset["name"] not in names:
@@ -229,10 +241,10 @@ class GitHubUpdater:
                 asset["size"] = int(size)
             selected.append(asset)
         # A changed/empty HTML layout must not silently look like a successful check.
-        if not any(a["name"].endswith(".dmg") for a in selected):
-            raise UpdateError("GitHub 发布页面未找到可校验的 Apple 芯片安装包")
-        return parse_release(dict(tag_name=tag, html_url=page, draft=False, prerelease=False,
-                                  body=notes, assets=selected), self.current, self.repository)
+        if not any(a["name"] == self.primary_asset_name(tag) for a in selected):
+            raise UpdateError("GitHub 发布页面未找到可校验的安装包")
+        return self.parse_data(dict(tag_name=tag, html_url=page, draft=False, prerelease=False,
+                                   body=notes, assets=selected))
 
     def download(self, release: Release, cancel: threading.Event, progress) -> Path:
         self.fallback_reason = None

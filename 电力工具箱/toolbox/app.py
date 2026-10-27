@@ -44,14 +44,9 @@ def default_workspace() -> Path:
 
 
 def application_version() -> str:
-    version = os.environ.get("TOOLBOX_APP_VERSION", "").strip()
-    if not version:
-        try:
-            package = default_workspace() / "desktop/package.json"
-            version = json.loads(package.read_text(encoding="utf-8"))["version"]
-        except (OSError, ValueError, KeyError, TypeError):
-            return "版本未知"
-    return f"版本 v{version}"
+    from toolbox_version import application_version as read_version
+    version = read_version()
+    return "版本未知" if version == "未知" else f"版本 v{version}"
 
 
 class ToolboxApp(tk.Tk):
