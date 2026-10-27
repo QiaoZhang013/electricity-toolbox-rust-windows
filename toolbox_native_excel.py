@@ -18,12 +18,6 @@ import threading
 import warnings
 from toolbox_platform import hidden_process_options
 
-from openpyxl import load_workbook as python_load_workbook
-from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
-from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter, range_boundaries
-from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900, from_excel, from_ISO8601
-from openpyxl.worksheet._reader import _cast_number
-
 ROOT = Path(__file__).resolve().parent
 _prefetched = ContextVar("native_excel_prefetched", default=None)
 _excel_session = ContextVar("native_excel_session", default=None)
@@ -180,6 +174,13 @@ def fallback_warning(exc):
     warnings.warn(f"Rust Excel 读取不可用，改用 Python: {detail}", RuntimeWarning)
 
 
+def python_load_workbook(*args, **kwargs):
+    # JSON-only native operations (including the market editor) must not
+    # initialize openpyxl/NumPy on Tk's event thread.
+    from openpyxl import load_workbook
+    return load_workbook(*args, **kwargs)
+
+
 @dataclass(frozen=True, slots=True)
 class ValueCell:
     value: object
@@ -190,6 +191,14 @@ class ValueCell:
 
 class ValueSheet:
     def __init__(self, data, book, read_only):
+        from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter, range_boundaries
+        from openpyxl.utils.datetime import from_excel, from_ISO8601
+        from openpyxl.worksheet._reader import _cast_number
+        self._coordinate_to_tuple = coordinate_to_tuple
+        self._get_column_letter = get_column_letter
+        self._from_excel = from_excel
+        self._from_ISO8601 = from_ISO8601
+        self._cast_number = _cast_number
         self.title = data["name"]
         self._data = data
         self._formats = book.formats
@@ -214,7 +223,7 @@ class ValueSheet:
     def cell(self, row, column):
         if row < 1 or column < 1:
             raise ValueError("Row or column values must be at least 1")
-        coordinate = f"{get_column_letter(column)}{row}"
+        coordinate = f"{self._get_column_letter(column)}{row}"
         style = self._styles.get(coordinate, 0)
         fmt = self._formats[style]
         if self._read_only and coordinate not in self._styles:
@@ -223,19 +232,19 @@ class ValueSheet:
         rows = self._data["rows"]
         value = rows[rr][cc] if 0 <= rr < len(rows) and 0 <= cc < len(rows[rr]) else None
         if coordinate in self._data["raw_numbers"]:
-            value = _cast_number(self._data["raw_numbers"][coordinate])
+            value = self._cast_number(self._data["raw_numbers"][coordinate])
         kind = self._data["types"].get(coordinate, "n")
         if isinstance(value, dict):
             if "error" in value:
                 value, kind = value["error"], "e"
             elif "iso_date" in value:
-                value, kind = from_ISO8601(value["iso_date"]), "d"
+                value, kind = self._from_ISO8601(value["iso_date"]), "d"
             elif "excel_date" in value:
                 value = value["excel_date"]
             else:
                 raise ValueError("不支持的 Rust Excel 单元格类型")
         if type(value) in (int, float) and self._date_formats[style]:
-            value = from_excel(value, epoch=self._epoch, timedelta=self._duration_formats[style])
+            value = self._from_excel(value, epoch=self._epoch, timedelta=self._duration_formats[style])
             kind = "d"
         elif isinstance(value, bool):
             kind = "b"
@@ -248,7 +257,7 @@ class ValueSheet:
         return ValueCell(value, fmt, coordinate, kind)
 
     def __getitem__(self, coordinate):
-        row, column = coordinate_to_tuple(coordinate)
+        row, column = self._coordinate_to_tuple(coordinate)
         return self.cell(row, column)
 
     def iter_rows(self, min_row=1, max_row=None, min_col=1, max_col=None, values_only=False):
@@ -265,6 +274,8 @@ class ValueSheet:
 
 class ValueWorkbook:
     def __init__(self, response, read_only=True):
+        from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
+        from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900
         self.read_only = read_only
         self.epoch = CALENDAR_MAC_1904 if response["epoch1904"] else CALENDAR_WINDOWS_1900
         custom = response["custom_formats"]
@@ -297,6 +308,8 @@ class ValueWorkbook:
 def read_model_frame(path, preferred="整合数据"):
     """Retain pandas' own Excel header/NA/dtype inference with native values."""
     import pandas as pd
+    from openpyxl.utils.cell import coordinate_to_tuple
+    from openpyxl.worksheet._reader import _cast_number
     if backend_mode() == "python" or (backend_mode() == "auto" and native_binary() is None):
         with pd.ExcelFile(path) as excel:
             return pd.read_excel(excel, sheet_name=preferred if preferred in excel.sheet_names else excel.sheet_names[0])
