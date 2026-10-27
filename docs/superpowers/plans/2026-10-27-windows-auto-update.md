@@ -63,7 +63,7 @@ Windows native bridge selects `WindowsUpdater`; macOS keeps `RemoteUpdater`.
   build full NSIS installer and SHA-256; verify payload and version.
 - [x] Test actual v0.1.21→v0.1.22 installation handoff/relaunch in an isolated Chinese/space
   directory with preserved configuration/data; test packaged log version and updater metadata.
-- [ ] Complete whole-change independent review and targeted fixes, commit/push latest main,
+- [x] Complete whole-change independent review and targeted fixes, commit/push latest main,
   read remote revision, then create v0.1.22 tag/release and upload installer/checksum.
-- [ ] Read back public release/digests and current CI; preserve local evidence and clean
+- [x] Read back public release/digests and current CI; preserve local evidence and clean
   only task-owned installation/source copies. Report links and any unverified scope.
