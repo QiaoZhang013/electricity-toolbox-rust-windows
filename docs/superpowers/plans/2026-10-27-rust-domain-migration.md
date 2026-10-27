@@ -69,7 +69,7 @@ Own: Rust service binary/modules, desktop host launch path, Python service compa
 - [x] Request scoped review of each task and a final broad review, fix important issues with red/green evidence, and record unresolved minor limitations.
 - [x] Update version/changelog and truthful migration inventory; distinguish migrated default paths from retained compatibility engines/fallbacks.
 - [x] Rebuild Windows payload/NSIS, validate manifest hashes, install/start/exit/uninstall in an isolated Chinese/space path and preserve test data.
-- [ ] Commit task changes, attempt authorized origin/main sync without credential prompts, and deliver installer, digest and source patch if write access remains unavailable.
+- [x] Commit task changes, attempt authorized origin/main sync without credential prompts, and deliver installer, digest and source patch if write access remains unavailable.
 
 ## Review focus
 1. Date shifts must use calendar dates, not a row offset when a day is missing.

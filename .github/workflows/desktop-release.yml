@@ -23,6 +23,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
+    # Forks publish Windows installers separately; macOS releases remain manual.
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'a792275829-cpu/electricity-toolbox-scripts'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}

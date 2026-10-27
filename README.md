@@ -8,6 +8,8 @@ Windows 移植版：[Qiaozhang13/electricity-toolbox-rust-windows](https://githu
 
 ## Windows 版
 
+本移植仓库的 Releases 提供 Windows x64 安装包；下文保留原项目的 macOS 源码与安装说明。
+
 Windows x64 版采用 Rust/Tauri 宿主、Rust 任务服务和业务计算后端，保留原有 15 页界面、字段和业务规则。断面分析、交易与汇总、预测预处理、PDF 图表处理、接口数据整理、Excel 定点更新和事务提交均已接入 Rust。Python/Tk、浏览器登录、模型训练与文档引擎继续保留；迁移范围及验证口径见 [Rust 迁移说明](docs/RUST_MIGRATION.md)。
 
 源码运行：先双击 `00_启动/Windows初始化.cmd`，完成后双击 `00_启动/Windows启动.cmd`。安装包使用方式、构建步骤和验证边界见 [Windows 使用说明](desktop/WINDOWS.md)。下面的 DMG 和 Mac 初始化说明仅适用于 macOS。
