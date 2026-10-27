@@ -229,6 +229,37 @@ class ManualUiTests(unittest.TestCase):
         self.registry.terminate_all()
         self.root.destroy()
 
+    def test_maintenance_is_entered_only_in_market_editor_and_forwarded(self):
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+
+        from tkinter import ttk
+        widgets = list(descendants(self.page))
+        labels = {str(widget.cget("text")) for widget in widgets if isinstance(widget, ttk.Label)}
+        self.assertNotIn("实时检修容量（可选，万千瓦）", labels)
+        self.assertFalse(any(
+            isinstance(widget, ttk.Entry)
+            and str(widget.cget("textvariable")) == str(self.page.realtime_maintenance)
+            for widget in widgets
+        ))
+        self.page.open_market_editor()
+        editor = self.page.market_editor
+        editor.values["realtime"]["maintenance"]["value"].set("0")
+        editor.values["realtime"]["maintenance"]["comparison"].set("5")
+        editor.save()
+        with tempfile.TemporaryDirectory() as directory:
+            for name, variable in (("d", self.page.day_report), ("previous", self.page.previous_report),
+                                   ("d2", self.page.d2_report)):
+                source = Path(directory) / f"{name}.xlsx"
+                source.touch()
+                variable.set(str(source))
+            command = self.page.build_command()
+        self.assertNotIn("--realtime-maintenance", command)
+        manual = json.loads(command[command.index("--manual-market") + 1])
+        self.assertEqual(manual["realtime"]["maintenance"], {"value": 0, "comparison": 5})
+
     def test_36_fields_delta_save_and_date_change_clears_dialog(self):
         self.page.open_market_editor()
         editor = self.page.market_editor

@@ -53,8 +53,6 @@ class MarketReportPage(ToolPage):
             ))
         ttk.Label(form, text="东莞运行方式修正（可选）").grid(row=4, column=0, sticky="w", pady=5)
         ttk.Entry(form, textvariable=self.dongguan_operation).grid(row=4, column=1, sticky="ew", pady=5)
-        ttk.Label(form, text="实时检修容量（可选，万千瓦）").grid(row=5, column=0, sticky="w", pady=5)
-        ttk.Entry(form, textvariable=self.realtime_maintenance, width=18).grid(row=5, column=1, sticky="w", pady=5)
 
         market_form = ttk.LabelFrame(self.content, text="市场情况补录（可选）", padding=14)
         market_form.grid(row=1, column=0, sticky="ew", pady=(12, 0))
