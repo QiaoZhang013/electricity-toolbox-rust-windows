@@ -1,6 +1,7 @@
 //! Headless task protocol 3. Python is a short-lived engine adapter, not a scheduler.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 mod service_process;
+mod windows_update;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::{collections::{HashMap, VecDeque}, fs, io::{self, BufRead, BufReader, Write},
@@ -262,6 +263,13 @@ fn call(config: &Config, shared: &Shared, closed: &AtomicBool, method: &str, par
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if let Some(path) = args.windows(2).find(|pair| pair[0] == "--windows-update-helper") {
+        if let Err(error) = windows_update::run(std::path::Path::new(&path[1])) {
+            eprintln!("Windows 更新未完成：{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     let arg = |name: &str| args.windows(2).find(|pair| pair[0] == name).map(|pair| PathBuf::from(&pair[1]));
     let workspace = arg("--workspace").unwrap_or_else(|| std::env::current_dir().unwrap());
     let config = Config { code_root: arg("--code-root").unwrap_or_else(|| workspace.clone()), workspace,

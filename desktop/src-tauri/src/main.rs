@@ -123,6 +123,14 @@ impl Backend {
             .env("TOOLBOX_CODE_ROOT", &root)
             .env("TOOLBOX_APP_VERSION", app.package_info().version.to_string());
         if let Ok(executable) = std::env::current_exe() {
+            if cfg!(windows) {
+                if let Some(installation) = executable.parent() {
+                    command.env("TOOLBOX_INSTALL_ROOT", installation)
+                        .env("TOOLBOX_APP_HOME", &app_home)
+                        .env("TOOLBOX_HOST_PID", std::process::id().to_string())
+                        .env("TOOLBOX_INSTALLED", if managed { "1" } else { "0" });
+                }
+            }
             if let Some(bundle) = executable.ancestors().find(|p| p.extension().is_some_and(|x| x == "app")) {
                 command.env("TOOLBOX_APP_BUNDLE", bundle);
             }

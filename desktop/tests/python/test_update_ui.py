@@ -50,6 +50,15 @@ class UpdateUiTests(unittest.TestCase):
         self.assertEqual(self.controller.window.primary.cget("text"), "开始更新")
         self.assertIs(self.controller.window.controller.app, self.app)
 
+    def test_windows_notes_describe_full_windows_installer(self):
+        self.controller.release = Release('v0.1.22','Windows 更新','https://github.com/test/repo/releases/tag/v0.1.22',
+                                          {'name':'ElectricityToolbox_0.1.22_windows_x64_setup.exe'})
+        self.controller.show()
+        window=self.controller.window
+        self.assertIn('Windows',window.platform_text)
+        self.assertNotIn('增量',window.status.get())
+        self.assertNotIn('Apple',window.platform_text)
+
     def test_automatic_errors_are_silent_but_manual_errors_are_visible(self):
         with patch("update_ui.messagebox.showerror") as error:
             self.controller.checked(None, ValueError("离线"))

@@ -104,7 +104,9 @@ class UpdateWindow(tk.Toplevel):
         body.columnconfigure(0, weight=1)
         body.rowconfigure(3, weight=1)
         ttk.Label(body, text=f"发现新版本 {release.version}", font=("Helvetica", 20, "bold")).grid(sticky="w")
-        ttk.Label(body, text=f"当前 v{controller.updater.current}  →  {release.version}  ·  Apple 芯片").grid(sticky="w", pady=(8, 16))
+        self.is_windows = bool(release.asset and release.asset.get('name', '').endswith('.exe'))
+        self.platform_text = f"当前 v{controller.updater.current}  →  {release.version}  ·  " + ('Windows x64' if self.is_windows else 'Apple 芯片')
+        ttk.Label(body, text=self.platform_text).grid(sticky="w", pady=(8, 16))
         ttk.Separator(body).grid(sticky="ew", pady=(0, 12))
         notes_frame = ttk.Frame(body)
         notes_frame.grid(sticky="nsew")
@@ -119,7 +121,8 @@ class UpdateWindow(tk.Toplevel):
         notes.configure(state="disabled")
         self.progress = ttk.Progressbar(body, maximum=100)
         self.progress.grid(sticky="ew", pady=(12, 8))
-        self.status = tk.StringVar(self, "开始更新后将自动下载、校验、退出并安装，再重新启动工具箱；配置和数据保留。日常优先使用增量补丁。")
+        self.status = tk.StringVar(self, "开始更新后将自动下载、校验、退出并安装，再重新启动工具箱；配置和数据保留。" +
+                                  ('Windows 使用完整安装包，安装失败自动恢复旧程序。' if self.is_windows else '日常优先使用增量补丁。'))
         ttk.Label(body, textvariable=self.status, wraplength=490).grid(sticky="w", pady=(0, 16))
         actions = ttk.Frame(body)
         actions.grid(sticky="ew")
@@ -198,7 +201,7 @@ class UpdateWindow(tk.Toplevel):
         self.installing = True
         self.primary.configure(text="安装准备中…", state='disabled')
         self.cancel_button.configure(state='disabled')
-        self.status.set('正在校验镜像和应用，准备自动安装…')
+        self.status.set('正在校验 Windows 安装包并准备退出交接…' if self.is_windows else '正在校验镜像和应用，准备自动安装…')
         def prepare():
             try:
                 return self.controller.updater.prepare_install(self.release, path)

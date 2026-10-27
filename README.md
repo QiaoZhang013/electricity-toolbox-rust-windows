@@ -12,6 +12,8 @@ Windows 移植版：[Qiaozhang13/electricity-toolbox-rust-windows](https://githu
 
 Windows x64 版采用 Rust/Tauri 宿主、Rust 任务服务和业务计算后端，保留原有 15 页界面、字段和业务规则。断面分析、交易与汇总、预测预处理、PDF 图表处理、接口数据整理、Excel 定点更新和事务提交均已接入 Rust。Python/Tk、浏览器登录、模型训练与文档引擎继续保留；迁移范围及验证口径见 [Rust 迁移说明](docs/RUST_MIGRATION.md)。
 
+Windows 0.1.22 起支持应用内检查、下载校验、退出安装与自动重启；使用本仓库的 Windows 完整安装包更新，保留配置和数据。0.1.21 及更早版本需先手动安装一次新版。详见 [Windows 自动更新](desktop/WINDOWS.md#使用边界)。
+
 源码运行：先双击 `00_启动/Windows初始化.cmd`，完成后双击 `00_启动/Windows启动.cmd`。安装包使用方式、构建步骤和验证边界见 [Windows 使用说明](desktop/WINDOWS.md)。下面的 DMG 和 Mac 初始化说明仅适用于 macOS。
 
 ## DMG 桌面版

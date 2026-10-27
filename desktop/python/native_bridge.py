@@ -127,6 +127,17 @@ class NativeService:
         raise ValueError("原版界面仅接受启动、退出和更新请求")
 
 
+def create_updater(client):
+    if sys.platform == 'win32':
+        from windows_update import WindowsUpdater
+        from toolbox_version import application_version
+        return WindowsUpdater(application_version(), client)
+    if client is not None:
+        from remote_updater import RemoteUpdater
+        return RemoteUpdater(client)
+    return None
+
+
 def serve(root: Path = ROOT, *, remote_business: bool = False):
     protocol = sys.stdout
     # Existing modules may print; keep the transport exclusively JSON-lines.
@@ -147,11 +158,13 @@ def serve(root: Path = ROOT, *, remote_business: bool = False):
     app = ToolboxApp(workspace=root, registry=registry, check_updates=lambda: service.updater.show())
     service = NativeService(app, emit=send)
     from update_ui import UpdateController
-    updater = None
-    if client is not None:
-        from remote_updater import RemoteUpdater
-        updater = RemoteUpdater(client)
+    updater = create_updater(client)
     service.updater = UpdateController(app, service, updater=updater)
+    if sys.platform == 'win32':
+        previous_error = updater.take_install_error()
+        if previous_error:
+            app.after(600, lambda: messagebox.showerror('上次更新未完成', previous_error, parent=app))
+        threading.Thread(target=updater.cleanup_completed_download, daemon=True).start()
     close = lambda: service.call("request_close", {})
     app.protocol("WM_DELETE_WINDOW", close)
     if sys.platform == "darwin":

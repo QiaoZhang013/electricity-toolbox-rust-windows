@@ -1,6 +1,6 @@
 # Windows automatic update implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Ship Windows full-installer updates and correct log versions as v0.1.22.
 **Architecture:** Existing Python/Tk update worker downloads verified Windows assets;
@@ -29,11 +29,11 @@ new `toolbox_version.py`, `toolbox_log_console.py`, `电力工具箱/toolbox/app
 tests `test_windows_update.py`, `test_log_console.py`.
 **Interfaces:** `WindowsUpdater(current, client=None, opener=None)` with the existing
 updater API; `toolbox_version.application_version() -> str` returns the raw version.
-- [ ] Write tests asserting the exact Windows asset/repository, invalid metadata rejection,
+- [x] Write tests asserting the exact Windows asset/repository, invalid metadata rejection,
   download digest/cancellation and host-env log version; run and capture RED.
-- [ ] Add shared transport hooks without changing macOS defaults; implement Windows selection
+- [x] Add shared transport hooks without changing macOS defaults; implement Windows selection
   and download; centralize version lookup; run targeted tests GREEN.
-- [ ] Commit the independently verified metadata/log change.
+- [x] Commit the independently verified metadata/log change.
 
 ### Task 2: Rust installation handoff and reservation
 **Files:** new `native/price-xlsx/src/windows_update.rs`, `service_main.rs`,
@@ -41,21 +41,21 @@ updater API; `toolbox_version.application_version() -> str` returns the raw vers
 **Interfaces:** service executable `--windows-update-helper <plan.json>`;
 plan schema 1 contains installer/digest/size/version, installation/data roots,
 exact PID/image pairs and token. Gate/status paths derive from the plan directory.
-- [ ] Add RED tests for maintenance reservation, prepare/commit/abort, changed installer,
+- [x] Add RED tests for maintenance reservation, prepare/commit/abort, changed installer,
   helper waits/timeout, successful install and rollback with small NSIS fixtures.
-- [ ] Implement exact handle ownership, gate, digest lock, rollback/relaunch and outcome;
+- [x] Implement exact handle ownership, gate, digest lock, rollback/relaunch and outcome;
   wire Python prepare/commit/abort; run Rust and Windows helper tests GREEN.
-- [ ] Commit helper and reservation changes.
+- [x] Commit helper and reservation changes.
 
 ### Task 3: Native UI/host wiring
 **Files:** `native_bridge.py`, `update_ui.py`, `desktop/src-tauri/src/main.rs`,
 `test_update_ui.py`, `test_windows_platform.py`, payload selection and docs.
 **Interfaces:** host supplies installed flag, installation root, data home and host PID;
 Windows native bridge selects `WindowsUpdater`; macOS keeps `RemoteUpdater`.
-- [ ] Add RED tests for Windows selection/text, busy writes and failure unlock/notification.
-- [ ] Wire updater and host context, platform-specific status text and prior failure notice.
+- [x] Add RED tests for Windows selection/text, busy writes and failure unlock/notification.
+- [x] Wire updater and host context, platform-specific status text and prior failure notice.
   Run desktop Python regression and host/native Rust tests GREEN.
-- [ ] Update Windows instructions and changelog, set v0.1.22 using the version tool; commit.
+- [x] Update Windows instructions and changelog, set v0.1.22 using the version tool; commit.
 
 ### Task 4: Package, actual upgrade and publish
 **Files:** generated ignored payload/installers; release notes and verification evidence.
