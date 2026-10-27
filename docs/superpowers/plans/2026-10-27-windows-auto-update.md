@@ -59,9 +59,9 @@ Windows native bridge selects `WindowsUpdater`; macOS keeps `RemoteUpdater`.
 
 ### Task 4: Package, actual upgrade and publish
 **Files:** generated ignored payload/installers; release notes and verification evidence.
-- [ ] Build new release binaries, refresh all changed managed sources/manifest,
+- [x] Build new release binaries, refresh all changed managed sources/manifest,
   build full NSIS installer and SHA-256; verify payload and version.
-- [ ] Test actual v0.1.21→v0.1.22 installation handoff/relaunch in an isolated Chinese/space
+- [x] Test actual v0.1.21→v0.1.22 installation handoff/relaunch in an isolated Chinese/space
   directory with preserved configuration/data; test packaged log version and updater metadata.
 - [ ] Complete whole-change independent review and targeted fixes, commit/push latest main,
   read remote revision, then create v0.1.22 tag/release and upload installer/checksum.

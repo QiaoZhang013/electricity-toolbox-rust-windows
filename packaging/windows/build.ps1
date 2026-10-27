@@ -20,12 +20,14 @@ finally { Pop-Location }
 $output = Join-Path $root 'dist/windows'
 New-Item -ItemType Directory -Force $output | Out-Null
 $targetRoot = if ($env:CARGO_TARGET_DIR) { [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR) } else { "$root/desktop/src-tauri/target" }
-$installers = @(Get-ChildItem -LiteralPath "$targetRoot/release/bundle/nsis" -Filter '*.exe')
-if ($installers.Count -eq 0) { throw 'NSIS build produced no installer.' }
+$version = (Get-Content -LiteralPath "$root/desktop/package.json" -Raw | ConvertFrom-Json).version
+$downloadName = "ElectricityToolbox_${version}_windows_x64_setup.exe"
+$installers = @(Get-ChildItem -LiteralPath "$targetRoot/release/bundle/nsis" -Filter "*_${version}_x64-setup.exe")
+if ($installers.Count -ne 1) { throw 'NSIS build must produce exactly one installer for the current version.' }
 $installers | ForEach-Object {
-    $destination = Join-Path $output $_.Name
+    $destination = Join-Path $output $downloadName
     Copy-Item -LiteralPath $_.FullName -Destination $destination
     $digest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
-    [IO.File]::WriteAllText("$destination.sha256", "$digest  $($_.Name)`n")
+    [IO.File]::WriteAllText("$destination.sha256", "$digest  $downloadName`n")
 }
 Write-Host "Windows installer and SHA256: $output"
