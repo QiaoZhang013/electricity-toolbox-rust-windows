@@ -8,7 +8,8 @@ from src import analyze_500kv_section_gaps as gaps
 from src import deduplicate_500kv_prices as dedupe
 from src import classify_500kv_nodes as classification
 from openpyxl import Workbook, load_workbook
-BINARY = Path(os.environ.get('TOOLBOX_NATIVE_BINARY', 'D:/electricity-toolbox-build/domain-target/debug/toolbox-price-xlsx.exe'))
+from toolbox_native_excel import native_binary
+BINARY = native_binary() or Path(__file__).resolve().parents[1] / 'bin' / ('toolbox-price-xlsx.exe' if os.name == 'nt' else 'toolbox-price-xlsx')
 def call(action, **payload):
     p=subprocess.run([str(BINARY), 'domain-sections'],input=json.dumps(dict(protocol=1,path='',operation='sections',payload=dict(action=action,**payload))),text=True,encoding="utf-8",capture_output=True)
     if p.returncode: raise RuntimeError(p.stderr)

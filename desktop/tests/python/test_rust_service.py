@@ -108,8 +108,13 @@ class RustServiceTests(unittest.TestCase):
         task = self.finish(task_id)
         self.assertEqual(task["state"], "failed")
         self.assertIn("退出码 1", task["error"])
+        self.assertIn("\nRuntimeError: first-business-failure\n", task["error"])
         self.assertIn("first-business-failure", task["error"])
-        self.assertNotIn("do-not-leak", json.dumps(self.call("events"), ensure_ascii=False))
+        events = self.call("events")
+        self.assertNotIn("do-not-leak", json.dumps(events, ensure_ascii=False))
+        from toolbox.tasks.errors import RemoteTaskError
+        streamed = "".join(row["message"] for row in events["events"] if row["kind"] == "log")
+        self.assertNotIn("Traceback", RemoteTaskError(task["error"], streamed).log_details)
 
     def test_uninterruptible_write_refuses_cancellation_and_shutdown(self):
         target = self.workspace / "市场表更新/update_market_table.py"
