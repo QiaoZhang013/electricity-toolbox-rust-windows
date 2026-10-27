@@ -356,7 +356,7 @@ def node_executable() -> str:
     configured = os.environ.get("TOOLBOX_NODE")
     if configured and Path(configured).is_file():
         return configured
-    bundled = portable_runtime_root() / "node/bin/node"
+    bundled = portable_runtime_root() / ("node/node.exe" if os.name == "nt" else "node/bin/node")
     if bundled.is_file():
         return str(bundled)
 

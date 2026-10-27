@@ -4,26 +4,25 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 from pypdf import PdfReader
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from toolbox_platform import directory_lock
 
 
 @contextmanager
 def output_directory_lock(output_dir: Path):
     """Lock one report date without leaving lock files."""
-    import fcntl
-
-    descriptor = os.open(output_dir, os.O_RDONLY)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("同日期日报正在保存，请稍后重试。") from exc
-        yield
-    finally:
-        os.close(descriptor)
+        with directory_lock(output_dir):
+            yield
+    except BlockingIOError as exc:
+        raise RuntimeError("同日期日报正在保存，请稍后重试。") from exc
 
 
 def publish_pdf_pair(output_dir: Path, sources: tuple[Path, Path]) -> tuple[Path, Path]:

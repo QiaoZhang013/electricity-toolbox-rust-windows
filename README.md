@@ -1,8 +1,14 @@
-# 电力工作工具箱 macOS 版
+# 电力工作工具箱（macOS / Windows）
 
-这是一个面向 macOS 的电力业务桌面工具集合。统一入口为 Tkinter 图形界面，当前集成 15 个工具，包括上网电量导出、风力预测截图、市场表更新、现货价格分析表更新、交易系统信息更新、功率调整收益统计表更新、广东电价预测、电力交易分析、500kV断面分析、广东运行日报解析上传、南方分公司电力市场日报、出清结果汇总上传、生产经营报告生成、集团每日数据上传和 WPS/KDocs 写入。
+这是一个面向 macOS 和 Windows 的电力业务桌面工具集合。统一入口为原版 Tkinter 图形界面，当前集成 15 个工具，包括上网电量导出、风力预测截图、市场表更新、现货价格分析表更新、交易系统信息更新、功率调整收益统计表更新、广东电价预测、电力交易分析、500kV断面分析、广东运行日报解析上传、南方分公司电力市场日报、出清结果汇总上传、生产经营报告生成、集团每日数据上传和 WPS/KDocs 写入。
 
 仓库公开地址：[a792275829-cpu/electricity-toolbox-scripts](https://github.com/a792275829-cpu/electricity-toolbox-scripts)
+
+## Windows 版
+
+Windows x64 版继续采用 Rust/Tauri 宿主与 Rust Excel 后端，保留原有 15 页界面、字段和业务规则。Python/Tk 与部分 Node 业务模块仍然保留，并非全部代码已改写为 Rust。
+
+源码运行：先双击 `00_启动/Windows初始化.cmd`，完成后双击 `00_启动/Windows启动.cmd`。安装包使用方式、构建步骤和验证边界见 [Windows 使用说明](desktop/WINDOWS.md)。下面的 DMG 和 Mac 初始化说明仅适用于 macOS。
 
 ## DMG 桌面版
 

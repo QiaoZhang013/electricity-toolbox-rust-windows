@@ -221,10 +221,12 @@ fn read_impl(path: &str, selected: &[String], compact: bool) -> Result<Value, Er
             &mut zip,
             &sheet_path(rels.get(&id).ok_or("missing worksheet relationship")?)?,
         )?;
-        let mut styles = BTreeMap::<String, usize>::new();
-        let mut types = BTreeMap::<String, String>::new();
+        // Build protocol maps directly, then move them into the response.
+        // Large sheets otherwise clone every coordinate and scalar during json!.
+        let mut styles = serde_json::Map::new();
+        let mut types = serde_json::Map::new();
         let mut merges = Vec::new();
-        let mut raw_numbers = BTreeMap::new();
+        let mut raw_numbers = serde_json::Map::new();
         let mut current_cell = String::new();
         let mut numeric_cell = false;
         let mut in_value = false;
@@ -266,11 +268,11 @@ fn read_impl(path: &str, selected: &[String], compact: bool) -> Result<Value, Er
                         numeric_cell = kind.as_deref().is_none_or(|kind| kind == "n");
                         if !compact {
                             if let Some(kind) = kind {
-                                types.insert(pos.clone(), kind);
+                                types.insert(pos.clone(), Value::String(kind));
                             }
                         }
                         if !compact || potential_dates.get(style).copied().unwrap_or(true) {
-                            styles.insert(pos.clone(), style);
+                            styles.insert(pos.clone(), Value::from(style));
                         }
                         current_cell = pos;
                     }
@@ -310,7 +312,7 @@ fn read_impl(path: &str, selected: &[String], compact: bool) -> Result<Value, Er
                     if value.parse::<f64>().is_ok_and(|v| {
                         !compact || !v.is_finite() || v.abs() >= (1_u64 << 53) as f64
                     }) {
-                        raw_numbers.insert(current_cell.clone(), value.into_owned());
+                        raw_numbers.insert(current_cell.clone(), Value::String(value.into_owned()));
                     }
                 }
                 Event::End(element) if element.local_name().as_ref() == b"v" => in_value = false,
@@ -348,7 +350,7 @@ fn read_impl(path: &str, selected: &[String], compact: bool) -> Result<Value, Er
             .collect::<Result<Vec<_>, Error>>()?;
         drop(range);
         let mut sheet = json!({"name":name, "row_offset":row_offset, "col_offset":col_offset,
-            "styles":styles, "types":types, "merges":merges, "raw_numbers":raw_numbers,
+            "merges":merges,
             "prepared_frame":compact, "object_cells":object_cells,
             "max_row":if declared_row == 0 {actual_row} else {declared_row},
             "max_column":if declared_col == 0 {actual_col} else {declared_col},
@@ -356,6 +358,9 @@ fn read_impl(path: &str, selected: &[String], compact: bool) -> Result<Value, Er
         // json! serializes borrowed Vec<Value>s by cloning their contents.
         // Move the already-built rows and sheets into the response instead.
         sheet["rows"] = Value::Array(rows.into_iter().map(Value::Array).collect());
+        sheet["styles"] = Value::Object(styles);
+        sheet["types"] = Value::Object(types);
+        sheet["raw_numbers"] = Value::Object(raw_numbers);
         sheets.push(sheet);
     }
     let mut result = json!({"protocol":1, "epoch1904":epoch1904,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import hashlib
-import fcntl
+from toolbox_platform import directory_lock
 import shutil
 import uuid
 from contextlib import contextmanager, ExitStack
@@ -23,7 +23,15 @@ def workbook_fingerprint(path: Path) -> FileFingerprint:
     with path.open("rb") as source:
         before = identity(os.fstat(source.fileno()))
         digest = hashlib.file_digest(source, "sha256").hexdigest()
-        if before != identity(os.fstat(source.fileno())) or before != identity(path.stat()):
+        if os.name == "nt":
+            # Windows path-stat may return a cached creation timestamp whereas
+            # fstat uses handle metadata. Compare two handles, retaining inode,
+            # mtime, ctime and size checks (do not weaken conflict detection).
+            with path.open("rb") as current:
+                named_identity = identity(os.fstat(current.fileno()))
+        else:
+            named_identity = identity(path.stat())
+        if before != identity(os.fstat(source.fileno())) or before != named_identity:
             raise RuntimeError(f"读取期间工作簿被修改，停止写入：{path}")
     return (*before, digest)
 
@@ -42,10 +50,8 @@ def workbook_commit_lock(paths):
     """Serialize commits in each destination directory without leaving lock files."""
     with ExitStack() as stack:
         for parent in sorted({Path(path).resolve().parent for path in paths}):
-            descriptor = os.open(parent, os.O_RDONLY)
-            stack.callback(os.close, descriptor)
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                stack.enter_context(directory_lock(parent))
             except BlockingIOError as exc:
                 raise RuntimeError(f"该目录有其他工作簿正在提交，请稍后重试：{parent}") from exc
         yield

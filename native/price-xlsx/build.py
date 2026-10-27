@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def build(destination: Path | None = None, target: str | None = None) -> Path:
-    cargo = shutil.which("cargo") or str(Path.home() / ".cargo/bin/cargo")
+    cargo = shutil.which("cargo") or str(Path.home() / ".cargo/bin" / ("cargo.exe" if os.name == "nt" else "cargo"))
     crate = Path(__file__).resolve().parent
     args = [cargo, "build", "--release", "--locked", "--manifest-path", str(crate / "Cargo.toml")]
     if target:
@@ -20,8 +20,10 @@ def build(destination: Path | None = None, target: str | None = None) -> Path:
     artifacts = Path(os.environ.get("CARGO_TARGET_DIR", crate / "target"))
     if target:
         artifacts /= target
-    binary = artifacts / "release/toolbox-price-xlsx"
-    destination = destination or ROOT / "500kV断面分析/bin/toolbox-price-xlsx"
+    windows = "windows" in target if target else os.name == "nt"
+    name = "toolbox-price-xlsx.exe" if windows else "toolbox-price-xlsx"
+    binary = artifacts / "release" / name
+    destination = destination or ROOT / "500kV断面分析/bin" / name
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(binary, destination)
     destination.chmod(0o755)

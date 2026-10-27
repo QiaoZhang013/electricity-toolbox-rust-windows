@@ -140,7 +140,7 @@ class ToolPageTaskTests(unittest.TestCase):
         self.assertEqual([], animation_timers())
         self.page.pack()
         self.root.deiconify()
-        self.root.update_idletasks()
+        self.root.update()
         self.assertEqual(1, len(animation_timers()))
         self.assertEqual("80", animation_timers()[0][2])
         self.page.pack_forget()

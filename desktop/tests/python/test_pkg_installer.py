@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "packaging/tauri/pkg-scripts"
 
 
+@unittest.skipUnless(sys.platform == 'darwin', 'macOS PKG installation scripts')
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

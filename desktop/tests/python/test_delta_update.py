@@ -37,6 +37,7 @@ class Response(io.BytesIO):
     status = 200
 
 
+@unittest.skipUnless(sys.platform == 'darwin', 'macOS bundle modes, symlinks and DMG updates')
 class DeltaTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

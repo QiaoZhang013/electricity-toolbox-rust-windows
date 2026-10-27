@@ -14,6 +14,7 @@ from queue import Empty, Queue
 from typing import Callable, Mapping, Sequence
 
 from .models import CancellationToken, TaskCancelled
+from toolbox_platform import hidden_process_options
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,16 +50,33 @@ class ProcessRunner:
     ) -> ProcessResult:
         token.raise_if_cancelled()
         lines: Queue[str | None] = Queue()
+        options = hidden_process_options()
+        if os.name == "nt":
+            from .windows_process import ProcessJob
+            options["creationflags"] |= 0x00000004  # CREATE_SUSPENDED (not exported by subprocess)
         process = subprocess.Popen(
             list(command), cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8",
             errors="replace", env=dict(env) if env is not None else None,
-            start_new_session=True,
+            start_new_session=os.name != "nt",
+            **options,
             close_fds=True, bufsize=1,
         )
         # start_new_session makes this PID the process-group ID. Remember it
         # while the leader exists, so cancellation can also reap orphaned children.
-        process._toolbox_process_group = process.pid
+        if os.name == "nt":
+            try:
+                process._toolbox_job = ProcessJob(process)
+                process._toolbox_job.resume(process.pid)
+            except BaseException:
+                process.kill()
+                process.wait()
+                if getattr(process, "_toolbox_job", None) is not None:
+                    process._toolbox_job.close()
+                process.stdout.close()
+                raise
+        else:
+            process._toolbox_process_group = process.pid
         with self._lock:
             self._active_process = process
 
@@ -67,19 +85,27 @@ class ProcessRunner:
         def read_stdout() -> None:
             assert process.stdout is not None
             descriptor = process.stdout.fileno()
-            os.set_blocking(descriptor, False)
+            if os.name != "nt":
+                os.set_blocking(descriptor, False)
             decoder = io.IncrementalNewlineDecoder(
                 codecs.getincrementaldecoder("utf-8")(errors="replace"), translate=True,
             )
             pending = ""
             try:
                 while not stop_reader.is_set():
-                    if not select.select([descriptor], [], [], 0.05)[0]:
-                        continue
-                    try:
-                        chunk = os.read(descriptor, 64 * 1024)
-                    except BlockingIOError:
-                        continue
+                    if os.name == "nt":
+                        from .windows_process import read_available
+                        chunk = read_available(descriptor)
+                        if chunk is None:
+                            stop_reader.wait(0.05)
+                            continue
+                    else:
+                        if not select.select([descriptor], [], [], 0.05)[0]:
+                            continue
+                        try:
+                            chunk = os.read(descriptor, 64 * 1024)
+                        except BlockingIOError:
+                            continue
                     if not chunk:
                         break
                     pending += decoder.decode(chunk)
@@ -119,6 +145,8 @@ class ProcessRunner:
             if process.poll() is None:
                 self.terminate(process)
             stop_reader.set()
+            if os.name == "nt":
+                process._toolbox_job.close()
             reader.join(timeout=1)
             if process.stdout is not None:
                 process.stdout.close()
@@ -126,6 +154,15 @@ class ProcessRunner:
                 self._active_process = None
 
     def terminate(self, process: subprocess.Popen[str]) -> None:
+        if os.name == "nt":
+            job = getattr(process, "_toolbox_job", None)
+            if job is not None:
+                job.terminate()
+            elif process.poll() is None:
+                # Legacy TaskRegistry callers can register a plain Popen.
+                process.terminate()
+            process.wait(timeout=self.terminate_timeout)
+            return
         deadline = time.monotonic() + self.terminate_timeout
         try:
             self._signal_owned_process(process, signal.SIGTERM)

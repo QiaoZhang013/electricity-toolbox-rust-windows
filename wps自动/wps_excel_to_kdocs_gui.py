@@ -43,6 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR.parent) not in sys.path:
     sys.path.insert(0, str(BASE_DIR.parent))
 from toolbox_storage import data_path
+from toolbox_platform import process_is_alive, hidden_process_options, windows_browser_processes, find_windows_browser
 from toolbox_wps_config import (_document_config_from_dict, _region_config_from_dict, _string_list, build_config_export, load_config_export, normalize_runtime_config, runtime_config_from_export_payload, save_config_export)
 from toolbox_log_console import LogConsole, explain_error, redact
 from toolbox_choices import SegmentedGroup
@@ -884,6 +885,9 @@ def managed_chrome_state_version() -> int:
 
 
 def managed_chrome_command(pid: int) -> str:
+    if sys.platform == "win32":
+        rows = windows_browser_processes(pid)
+        return (rows[0].get("CommandLine") or "") if rows else ""
     if sys.platform != "darwin":
         return ""
     try:
@@ -904,6 +908,7 @@ def is_managed_chrome_command(command: str) -> bool:
     is_browser_main_process = (
         "/Contents/MacOS/Google Chrome" in command
         or "/Contents/MacOS/Chromium" in command
+        or (sys.platform == "win32" and any(name in command.lower() for name in ("chrome.exe", "msedge.exe")))
     )
     return (
         profile_argument in command
@@ -915,6 +920,10 @@ def is_managed_chrome_command(command: str) -> bool:
 
 def discover_managed_chrome_pid() -> int | None:
     """Find a dedicated Chrome whose PID changed without updating our PID file."""
+    if sys.platform == "win32":
+        rows = windows_browser_processes()
+        return next((int(row["ProcessId"]) for row in rows
+                     if is_managed_chrome_command(row.get("CommandLine") or "")), None)
     if sys.platform != "darwin":
         return None
     try:
@@ -971,8 +980,9 @@ def managed_chrome_pid() -> int | None:
     recorded_pid: int | None = None
     try:
         recorded_pid = int(WPS_CHROME_PID_PATH.read_text(encoding="utf-8").strip())
-        os.kill(recorded_pid, 0)
-        if sys.platform == "darwin":
+        if not process_is_alive(recorded_pid):
+            raise ProcessLookupError
+        if sys.platform in {"darwin", "win32"}:
             if not is_managed_chrome_command(managed_chrome_command(recorded_pid)):
                 raise ProcessLookupError
         return recorded_pid
@@ -1008,6 +1018,8 @@ def managed_chrome_launch_version(pid: int) -> int:
 
 
 def managed_chrome_is_running(pid: int) -> bool:
+    if sys.platform == "win32":
+        return process_is_alive(pid)
     try:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError):
@@ -1030,6 +1042,20 @@ def managed_chrome_is_running(pid: int) -> bool:
 
 def stop_managed_chrome(pid: int, log, reason: str, timeout_seconds: float = 8) -> None:
     log(f"正在重启专用浏览器：{reason}")
+    if sys.platform == "win32":
+        if process_is_alive(pid):
+            if not is_managed_chrome_command(managed_chrome_command(pid)):
+                raise RuntimeError("进程已不属于 WPS 专用浏览器，已停止关闭操作。")
+            subprocess.run(["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, timeout=timeout_seconds,
+                           **hidden_process_options())
+            deadline = time_module.monotonic() + timeout_seconds
+            while process_is_alive(pid) and time_module.monotonic() < deadline:
+                time_module.sleep(0.1)
+            if process_is_alive(pid):
+                raise RuntimeError("专用浏览器未退出，请关闭其窗口后重试。")
+        clear_managed_chrome_state(pid)
+        return
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -1133,10 +1159,10 @@ def _ensure_wps_dedicated_chrome(
             log,
             "浏览器仍在运行，但连接无响应",
         )
-    if sys.platform != "darwin":
+    if sys.platform not in {"darwin", "win32"}:
         raise RuntimeError("当前系统不支持自动启动专用浏览器，请手动打开后连接。")
 
-    chrome_path = find_macos_chrome()
+    chrome_path = find_windows_browser() if sys.platform == "win32" else find_macos_chrome()
     if chrome_path is None:
         raise RuntimeError("未找到可用浏览器，请先安装谷歌浏览器。")
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1157,7 +1183,8 @@ def _ensure_wps_dedicated_chrome(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        start_new_session=os.name != "nt",
+        **hidden_process_options(),
     )
     remember_managed_chrome(
         process.pid,
@@ -2379,6 +2406,22 @@ class WpsWriterFrame(ttk.Frame):
             self.mapping_secondary_toolbar, text="导出", command=self.export_config, width=0
         ).pack(side="left", padx=(4, 0))
 
+        def fit_mapping_toolbar(event):
+            # System font metrics and display scaling differ on Windows.
+            # Keep the original single row whenever it fits; wrap imports only
+            # at narrow widths instead of clipping the rightmost action.
+            required = sum(group.winfo_reqwidth() for group in (
+                self.mapping_primary_toolbar, self.mapping_secondary_toolbar,
+                self.mapping_sort_toolbar)) + 24
+            narrow = required > event.width - 44
+            if narrow != getattr(self, "_mapping_toolbar_narrow", None):
+                self._mapping_toolbar_narrow = narrow
+                self.mapping_secondary_toolbar.grid_configure(
+                    row=1 if narrow else 0, column=0 if narrow else 1,
+                    padx=(0, 0) if narrow else (12, 0), pady=(4, 0) if narrow else (0, 0))
+
+        self.bind("<Configure>", fit_mapping_toolbar, add="+")
+
         tree_frame = ttk.Frame(mapping_frame)
         tree_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         tree_frame.rowconfigure(0, weight=1)
@@ -2895,7 +2938,7 @@ class WpsWriterFrame(ttk.Frame):
         if config.get("kdocs_url"):
             self.recent_urls = update_recent_urls(self.recent_urls, config["kdocs_url"])
         saved_browser_mode = config.get("browser_mode", "managed_cdp")
-        if saved_browser_mode == "persistent" and sys.platform == "darwin":
+        if saved_browser_mode == "persistent" and sys.platform in {"darwin", "win32"}:
             saved_browser_mode = "managed_cdp"
         self.browser_mode.set(saved_browser_mode)
         self.cdp_url.set(config.get("cdp_url", "http://127.0.0.1:9222"))

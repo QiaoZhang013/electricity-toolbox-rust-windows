@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import ssl
 import tempfile
 import threading
@@ -127,6 +128,8 @@ class GitHubUpdater:
         self.installer = None
 
     def prepare_update(self):
+        if sys.platform == "win32":
+            raise UpdateError("Windows 版请退出工具箱后运行新版安装程序；当前自动更新通道仅适用于 macOS。")
         if self.app_bundle is None:
             raise UpdateError("请使用安装后的桌面版执行自动更新")
 
@@ -155,6 +158,8 @@ class GitHubUpdater:
         return path
 
     def check(self) -> Release | None:
+        if sys.platform == "win32":
+            raise UpdateError("Windows 版暂使用安装包更新，请从项目发布页获取 Windows 安装程序。")
         request = urllib.request.Request(
             f"https://api.github.com/repos/{self.repository}/releases/latest",
             headers={"Accept": "application/vnd.github+json", "User-Agent": f"ElectricityToolbox/{self.current}",
@@ -244,6 +249,8 @@ class GitHubUpdater:
         return self.remember_download(release, self.download_full(release, cancel, progress))
 
     def download_full(self, release, cancel, progress):
+        if sys.platform == "win32":
+            raise UpdateError("Windows 版不支持安装 macOS 镜像，请使用 Windows 安装程序。")
         asset = release.asset
         if asset is None:
             raise UpdateError("此版本尚未提供 Apple 芯片安装包，请查看发布页面")

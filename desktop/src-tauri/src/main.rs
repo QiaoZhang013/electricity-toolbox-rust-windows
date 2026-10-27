@@ -1,4 +1,7 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use serde_json::{json, Value};
+mod platform;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
@@ -57,19 +60,20 @@ impl Backend {
             app_home.join("app")
         };
         let runtime = resources.join("runtime");
-        let bundled = runtime.join("python/bin/python3");
+        let bundled = runtime.join(platform::bundled_python());
         let python = if bundled.is_file() {
             bundled
         } else if cfg!(debug_assertions) {
-            root.join(".venv/bin/python")
+            root.join(platform::venv_python())
         } else {
             return Err("内置 Python 不完整，请重新安装完整发行版。".into());
         };
         if !python.is_file() {
-            return Err("Python 环境未初始化，请先运行 setup_macos.command。".into());
+            return Err(format!("Python 环境未初始化，请先运行 {}。", platform::setup_script()));
         }
         if managed && !ui {
             let mut setup = Command::new(&python);
+            platform::hide_console(&mut setup);
             setup
                 .args(["-I", "-B"])
                 .arg(resources.join("bootstrap/prepare_workspace.py"))
@@ -82,6 +86,7 @@ impl Backend {
             }
         } else if use_data_home && !ui {
             let mut setup = Command::new(&python);
+            platform::hide_console(&mut setup);
             setup
                 .args(["-B"])
                 .arg(root.join("packaging/tauri/workspace_layout.py"))
@@ -94,6 +99,7 @@ impl Backend {
         let gui_python = runtime.join("python/电力工具箱.app/Contents/MacOS/电力工具箱");
         let native_bundle = ui && cfg!(target_os = "macos") && gui_python.is_file();
         let mut command = Command::new(if native_bundle { &gui_python } else { &python });
+        platform::hide_console(&mut command);
         let entry = root.join(if ui { "desktop/python/native_bridge.py" } else { "desktop/python/service_bridge.py" });
         #[cfg(debug_assertions)]
         let entry = if ui { std::env::var_os("TOOLBOX_UI_TEST_ENTRY").map(PathBuf::from).unwrap_or(entry) } else { entry };
@@ -135,7 +141,7 @@ impl Backend {
                 .env("PLAYWRIGHT_BROWSERS_PATH", runtime.join("ms-playwright"))
                 .env(
                     "TOOLBOX_NODE",
-                    runtime.join("node/bin/node"),
+                    runtime.join(platform::bundled_node()),
                 );
             let tcl = runtime.join("python/lib/tcl8.6");
             if tcl.is_dir() {
@@ -242,10 +248,19 @@ struct State {
 }
 
 fn show_updater(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        // The normal Windows UI is Tk. Create WebView2 only for a startup
+        // failure, avoiding an idle browser process tree on every launch.
+        let window = handle.get_webview_window("main").or_else(|| {
+            let config = handle.config().app.windows.iter().find(|w| w.label == "main")?;
+            tauri::WebviewWindowBuilder::from_config(&handle, config).ok()?.build().ok()
+        });
+        if let Some(window) = window {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn finish_after_ui(app: &tauri::AppHandle) {

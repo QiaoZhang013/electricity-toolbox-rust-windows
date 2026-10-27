@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import sys
 import tkinter as tk
 from datetime import date
 from tkinter import font, ttk
@@ -35,7 +36,12 @@ class DateInput(ttk.Frame):
 
     def _open_from_key(self, _event=None) -> str:
         self.open_calendar()
-        self.popup.focus_set()
+        if sys.platform == "win32":
+            # Override-redirect windows are not activated by the Windows WM.
+            self.popup.update_idletasks()
+            self.popup.focus_force()
+        else:
+            self.popup.focus_set()
         return "break"
 
     def _open_from_click(self, _event=None) -> None:
@@ -100,7 +106,9 @@ class DateInput(ttk.Frame):
         y = self.winfo_rooty() + self.winfo_height() + 3
         if y + popup.winfo_reqheight() > popup.winfo_screenheight():
             y = max(0, self.winfo_rooty() - popup.winfo_reqheight())
-        popup.geometry(f"+{max(0, x)}+{y}")
+        # Native ttk themes can give the selected (bold) day a different
+        # requested size. Keep the initial six-week layout stable on navigation.
+        popup.geometry(f"{popup.winfo_reqwidth()}x{popup.winfo_reqheight()}+{max(0, x)}+{y}")
         popup.deiconify()
         # Keep the entry editable while the calendar is visible.
         self._dismiss_binding = self.winfo_toplevel().bind(

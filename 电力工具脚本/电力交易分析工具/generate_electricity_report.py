@@ -17,6 +17,7 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[2]
 if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
 from toolbox_native_excel import load_value_workbook, excel_session
+from toolbox_platform import open_path
 
 
 THERMAL_COMPANIES = ["汕头", "海门", "东莞"]
@@ -29,10 +30,7 @@ DEFAULT_OUTPUT_DIR = pathlib.Path.home() / "Downloads"
 def open_directory(path):
     path = pathlib.Path(path)
     path.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(path)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(path)], check=False)
+    open_path(path)
 
 
 def num(value, default=0.0):

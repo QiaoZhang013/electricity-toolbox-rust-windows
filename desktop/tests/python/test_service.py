@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT), str(ROOT / "电力工具箱")]
 from toolbox.service import ToolboxService
 from toolbox.runtime import ToolPaths
+from toolbox_platform import process_is_alive
 from toolbox.workflows import validate, plan
 
 
@@ -116,9 +117,7 @@ class ServiceTaskTests(unittest.TestCase):
         for pid in owned_pids:
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
+                if not process_is_alive(pid):
                     break
                 time.sleep(.01)
             else:

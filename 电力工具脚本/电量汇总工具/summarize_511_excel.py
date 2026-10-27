@@ -32,6 +32,7 @@ if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
 from toolbox_native_excel import load_value_workbook, prefetch_workbooks
 from toolbox_native_write import save_workbook as save_native_workbook
+from toolbox_platform import open_path
 
 FILE_TYPE_PATTERNS = {
     "realtime": "实时交易结果查询",
@@ -683,7 +684,7 @@ class SummaryApp(tk.Tk):
         if not target_dir.exists():
             messagebox.showwarning("目录不存在", f"目录不存在：\n{target_dir}")
             return
-        subprocess.run(["open", str(target_dir)], check=False)
+        open_path(target_dir)
 
 
 def run_cli(args: argparse.Namespace) -> int:

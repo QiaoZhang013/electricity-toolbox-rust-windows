@@ -5,13 +5,14 @@ import os
 import tkinter as tk
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import font, messagebox, ttk
 
 from .catalog import catalog_factories, default_catalog
 from .runtime import TaskRegistry, ToolPaths
 from .ui import DashboardPage, DiagnosticCenterPanel, TaskCenter, configure_theme
 from .ui.credentials_panel import CredentialsPanel
 from .ui.theme import SIDEBAR
+from toolbox_platform import configure_dpi
 
 PAGE_NAMES = (
     "导出上网电量",
@@ -64,6 +65,7 @@ class ToolboxApp(tk.Tk):
         check_updates: Callable[[], None] | None = None,
         registry: TaskRegistry | None = None,
     ) -> None:
+        configure_dpi()
         super().__init__()
         self.title("电力工作工具箱")
         self.paths = ToolPaths(workspace or default_workspace())
@@ -159,6 +161,12 @@ class ToolboxApp(tk.Tk):
         self.navigation.bind("<MouseWheel>", self._scroll_navigation)
         for label, _items in self._nav_groups:
             label.bind("<MouseWheel>", self._scroll_navigation)
+        if os.name == "nt":
+            nav_font = font.Font(root=self, font=ttk.Style(self).lookup("Nav.TButton", "font"))
+            # Canvas pixels do not scale with point-size fonts on high-DPI
+            # Windows displays. Keep every original Chinese module name visible.
+            self.nav_canvas.configure(width=max(220, max(
+                nav_font.measure(name) for name in self.nav_buttons) + 28))
         self.page_host = ttk.Frame(self)
         self.page_host.grid(row=0, column=1, sticky="nsew")
         self.page_host.rowconfigure(0, weight=1)

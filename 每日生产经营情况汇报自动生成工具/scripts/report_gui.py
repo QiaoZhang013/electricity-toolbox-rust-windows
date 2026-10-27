@@ -19,15 +19,13 @@ if str(APP_ROOT.parent) not in sys.path:
 from toolbox_storage import data_path
 from toolbox_dates import DATE_INPUT_ERROR, normalize_date_input, parse_date_input
 from toolbox_date_input import DateInput
+from toolbox_platform import open_path
 DOWNLOADS_DIR = Path.home() / "Downloads"
 
 
 def open_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(path)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(path)], check=False)
+    open_path(path)
 
 
 def python_executable() -> str:

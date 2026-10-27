@@ -15,14 +15,12 @@ if str(WORKSPACE) not in sys.path:
 from .file_rules import clearing_file_date
 from toolbox_dates import DATE_INPUT_ERROR, DATE_INPUT_HINT, normalize_date_input, parse_date_input
 from toolbox_date_input import DateInput
+from toolbox_platform import open_path
 
 
 def open_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(path)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(path)], check=False)
+    open_path(path)
 
 
 def default_review_root() -> Path:

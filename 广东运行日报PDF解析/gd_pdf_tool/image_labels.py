@@ -3,22 +3,30 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+from toolbox_platform import hidden_process_options
 
 
 def recognize_image_labels(image_path: Path) -> list[dict]:
-    """Use macOS Vision locally; no extra packages or developer tools needed."""
-    helper = Path(__file__).with_name("recognize_image_labels.js")
+    """Use local OS OCR; preserve Vision's normalized bottom-left box protocol."""
+    if sys.platform == "win32":
+        helper = Path(__file__).with_name("recognize_image_labels.ps1")
+        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                   "-File", str(helper), str(image_path.resolve())]
+    else:
+        helper = Path(__file__).with_name("recognize_image_labels.js")
+        command = ["/usr/bin/osascript", "-l", "JavaScript", str(helper), str(image_path)]
     try:
         result = subprocess.run(
-            ["/usr/bin/osascript", "-l", "JavaScript", str(helper), str(image_path)],
-            capture_output=True, text=True, check=True, timeout=90,
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, timeout=90, **hidden_process_options(),
         )
         return json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         detail = getattr(exc, "stderr", None) or str(exc)
-        raise RuntimeError(f"macOS 图片标签识别失败：{detail.strip()}") from exc
+        raise RuntimeError(f"图片标签识别失败：{detail.strip()}") from exc
 
 
 def merge_image_labels(table, labels: list[dict], width: float, height: float) -> list[list]:

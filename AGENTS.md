@@ -1,8 +1,8 @@
-# electricity-toolbox(mac) 工作约定
+# electricity-toolbox 工作约定
 
 ## 默认执行方式
 
-- 当前仓库仅维护 macOS 版，不再添加或恢复 Windows 专用启动器、安装器、打包流程和系统适配。
+- 按用户明确要求，同时维护 macOS 与 Windows x64；共用原版 Tk UI、业务逻辑和 Rust 后端，平台安装与更新流程分别维护。
 
 - 对修改、安装、配置、修复类请求，默认直接实施，不先输出长篇方案。
 - 只有业务口径、覆盖范围或破坏性操作存在实质歧义时才询问用户；其余小问题自行检查并处理。
@@ -12,7 +12,7 @@
 
 ## 仓库与改动边界
 
-- 本仓库是包含多个 Python/Tk 工具及少量 Node 工具的 macOS 工作区，不要把它当作单一 Python 包处理。
+- 本仓库包含 Rust/Tauri 宿主、Rust Excel 后端、多个 Python/Tk 工具及少量 Node 工具，不要把它当作单一 Python 包处理。
 - 修改前运行 `git status --short`，记录并保留用户已有改动；不得清理、覆盖或顺带格式化无关文件。
 - 只编辑完成当前任务所需的文件。生成物、登录态、浏览器 profile、真实配置和本地缓存不得加入版本控制。
 - 若根目录存在 `.codegraph/`，理解或定位代码时先使用 `codegraph explore "<问题或符号>"`；更新现有索引使用 `codegraph sync .`，不要重复执行初始化。
@@ -24,8 +24,9 @@
 
 - 项目 Python 环境以根目录 `.venv` 为准；不要把个人机器上的绝对解释器路径写入代码。
 - macOS 初始化入口是 `./setup_macos.command`，GUI 启动入口是 `./电力工具箱.command`。
+- Windows 初始化入口是 `setup_windows.ps1`，源码启动入口是 `start_windows.ps1`；安装包构建入口为 `packaging/windows/build.ps1`。使用原版 Tk 页面，不另写一套外观近似的 UI。
 - 保持“复制整个文件夹到另一台 Mac 后可初始化并运行”的可移植目标。
-- 路径处理使用 `pathlib.Path` 和脚本/仓库相对定位；打开目录时使用平台适配逻辑，不新增仅 Windows 可用的 `os.startfile` 或 `explorer` 调用。
+- 路径处理使用 `pathlib.Path` 和脚本/仓库相对定位；打开目录及进程控制集中使用平台适配逻辑，避免把系统专用调用散布到业务页面。
 - Node/npm 依赖只应作用于实际需要它们的子工具，不得变成所有 Python 工具的强制前置条件。
 
 ## Excel 与数据任务
@@ -69,7 +70,7 @@
 - 使用 `.venv/bin/python packaging/tauri/version.py set X.Y.Z --notes "具体变更"` 同步版本和日志；多项变更重复传入 `--notes`。日期默认采用 Asia/Shanghai，历史记录必须保留。
 - `CHANGELOG.md` 是逐版本更新内容的唯一来源；`packaging/tauri/release_notes.md` 只维护通用安装说明。发布时由版本脚本提取当前版本内容并拼接安装说明，用于 GitHub Release 与应用内更新说明。
 - 发布前执行 `version.py check --tag vX.Y.Z --require-notes`，确认版本一致且更新内容非空；缺少对应日志时禁止打包发布。已发布版本不得覆盖，下一次发布递增版本号。
-- 仅构建和发布 macOS Apple 芯片安装包，完成针对性测试、安装包与摘要校验后再发布 GitHub 正式版；生成物和签名私钥不进入 Git。
+- macOS 构建 Apple 芯片 DMG；Windows 构建 x64 NSIS 安装包及 SHA-256。完成针对性测试、安装包与摘要校验后才可发布正式版；生成物和签名私钥不进入 Git。Windows 当前通过完整安装包手动升级，禁止使用 macOS DMG／增量更新通道。
 
 - 桌面发行每个版本保留完整 DMG 和 `.dmg.sha256`，另发布 `update-manifest.json` 及适用的 `.patch.tar.xz` 增量补丁；不发布独立 `.app`、`.app.tar.gz`、`.sig` 或旧 `latest.json`，也不恢复 PKG。内部 `.app` 仅作构建与验证中间产物。
 - 日常维护优先增量更新，为最近三个正式版本生成直达补丁，保留历史补丁与索引中的升级路径；不得因只保留最新源码副本而删除旧版本发行附件。客户端选择总下载量最小且小于完整包的升级路径，逐步校验与还原；缺少路径、旧应用被改动或补丁失败时自动回退完整 DMG，用户取消不触发回退。

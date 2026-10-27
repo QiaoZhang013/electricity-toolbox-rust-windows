@@ -101,6 +101,9 @@ def short_error(exc: BaseException) -> str:
 
 
 def process_is_alive(pid: int) -> bool:
+    if os.name == "nt":
+        from toolbox_platform import process_is_alive as query_process
+        return query_process(pid)
     if pid <= 0:
         return False
     try:

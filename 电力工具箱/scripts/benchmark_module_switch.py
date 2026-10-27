@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import resource
 import statistics
 import sys
 import tempfile
@@ -20,6 +19,26 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "电力工具箱")]
+
+
+def peak_memory_mib():
+    if sys.platform != "win32":
+        import resource
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss /
+                     (1024 ** 2 if sys.platform == "darwin" else 1024), 2)
+    import ctypes
+    from ctypes import wintypes
+    class Counters(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("remaining", ctypes.c_size_t * 6)]
+    counters = Counters()
+    counters.cb = ctypes.sizeof(counters)
+    function = ctypes.windll.psapi.GetProcessMemoryInfo
+    function.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    if not function(wintypes.HANDLE(-1), ctypes.byref(counters), counters.cb):
+        raise ctypes.WinError()
+    return round(counters.PeakWorkingSetSize / 1024 ** 2, 2)
 
 
 def main() -> None:
@@ -136,8 +155,7 @@ def main() -> None:
                            "images": len(app.tk.call("image", "names")),
                            "commands": len(app.tk.call("info", "commands")),
                            "timers": len(app.tk.call("after", "info")),
-                           "peak_rss_mib": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss /
-                                                 (1024 ** 2 if sys.platform == "darwin" else 1024), 2)}
+                           "peak_rss_mib": peak_memory_mib()}
                     max_loop_lag = 0.0
                     with args.output.open("a", encoding="utf-8") as stream:
                         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -188,8 +206,7 @@ def main() -> None:
                 "pages": len(app.pages), "timers": len(app.tk.call("after", "info")),
                 "images": len(app.tk.call("image", "names")),
                 "commands": len(app.tk.call("info", "commands")),
-                "peak_rss_mib": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss /
-                                      (1024 ** 2 if sys.platform == "darwin" else 1024), 2),
+                "peak_rss_mib": peak_memory_mib(),
             })
             if app.current_page != target:
                 raise AssertionError("Navigation did not finish at the last requested module")

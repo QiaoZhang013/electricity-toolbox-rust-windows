@@ -8,6 +8,7 @@ import shutil
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.error
 from pathlib import Path
 
@@ -39,6 +40,13 @@ class Response(io.BytesIO):
 
 
 class GitHubUpdateTests(unittest.TestCase):
+    def setUp(self):
+        # Exercise the macOS release protocol on any host. The real Windows
+        # channel guard has its own integration regression test.
+        platform = patch('github_update.sys.platform', 'darwin')
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def test_numeric_versions_and_invalid_tags(self):
         self.assertGreater(version_parts("v1.10.0"), version_parts("1.9.9"))
         self.assertEqual(version_parts("1.2"), version_parts("1.2.0.0"))

@@ -42,12 +42,13 @@ original = ToolboxApp.__init__
 def build(app, *args, **kwargs):
     original(app, *args, **kwargs)
     def click():
+        app.update()
         button = app.nav_buttons["市场表更新"]
         button.event_generate("<Enter>", x=20, y=10)
         button.event_generate("<ButtonPress-1>", x=20, y=10)
         button.event_generate("<ButtonRelease-1>", x=20, y=10)
-    app.after(0, click)
-    app.after(300, app.destroy)
+    app.after(100, click)
+    app.after(800, app.destroy)
 spec = importlib.util.spec_from_file_location("navigation_benchmark", script)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

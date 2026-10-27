@@ -23,6 +23,7 @@ from service_bridge import DesktopService
 from prepare_payload import runtime_source
 
 
+@unittest.skipUnless(sys.platform == 'darwin', 'macOS automatic installation handoff')
 class AutoInstallGuards(unittest.TestCase):
     def test_helper_failure_keeps_old_app_and_reopens_it_with_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:

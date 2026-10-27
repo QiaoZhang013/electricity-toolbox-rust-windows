@@ -30,7 +30,7 @@ class WpsToolbarLayoutTests(unittest.TestCase):
         module = load_module("wps_responsive_toolbar_test", paths.wps_writer)
         frame = module.WpsWriterFrame(root)
         frame.pack(fill="both", expand=True)
-        root.update_idletasks()
+        root.update()
 
         expected = {
             "添加配置", "编辑", "复制", "删除", "上移", "下移",

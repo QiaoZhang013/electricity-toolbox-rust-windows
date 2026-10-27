@@ -13,14 +13,7 @@ from .file_dialogs import FileDialogState
 from .page_support import add_path_row, open_directory
 from .runtime import TaskRegistry, ToolPaths, python_executable
 from .widgets import ToolPage
-
-
-def open_path(path: Path) -> None:
-    path = Path(path)
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(path)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(path)], check=False)
+from toolbox_platform import open_path
 
 
 def result_html_name(source: Path) -> str:

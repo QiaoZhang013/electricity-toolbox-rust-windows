@@ -36,6 +36,7 @@ class EventBufferTests(unittest.TestCase):
 
 
 class ProcessRunnerTests(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "win32", "POSIX process-group permission regression; Windows uses Job Objects")
     def test_permission_denied_group_probe_does_not_replace_cancellation(self):
         import os
         import signal
@@ -93,6 +94,7 @@ class ProcessRunnerTests(unittest.TestCase):
                     cwd=Path.cwd(), env=None, token=token, on_output=lambda _: None)
             spawn.assert_not_called()
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX orphan/session semantics; Windows descendants tested separately")
     def test_cancel_reaps_orphans_and_children_ignoring_sigterm(self) -> None:
         import os
         import signal
@@ -157,6 +159,7 @@ class ProcessRunnerTests(unittest.TestCase):
                     unrelated.kill()
                     unrelated.wait(timeout=3)
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX detached-session semantics; Windows retains descendants in the job")
     def test_cancel_stops_output_reader_when_detached_child_holds_pipe(self):
         import os
         import signal
@@ -322,8 +325,8 @@ class ProcessRunnerTests(unittest.TestCase):
             token.cancel()
             thread.join(timeout=5)
             self.assertIsInstance(errors[0], TaskCancelled)
-            with self.assertRaises(ProcessLookupError):
-                os.kill(child_pid, 0)
+            from toolbox_platform import process_is_alive
+            self.assertFalse(process_is_alive(child_pid))
 
     @staticmethod
     def _run_captured(runner, code, token, errors) -> None:

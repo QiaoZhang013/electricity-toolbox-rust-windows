@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import warnings
+from toolbox_platform import hidden_process_options
 
 from openpyxl import load_workbook as python_load_workbook
 from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
@@ -29,8 +30,9 @@ _excel_session = ContextVar("native_excel_session", default=None)
 
 
 def native_binary():
-    for path in (ROOT / "500kV断面分析/bin/toolbox-price-xlsx",
-                 ROOT / "native/price-xlsx/target/release/toolbox-price-xlsx"):
+    name = "toolbox-price-xlsx.exe" if os.name == "nt" else "toolbox-price-xlsx"
+    for path in (ROOT / "500kV断面分析/bin" / name,
+                 ROOT / "native/price-xlsx/target/release" / name):
         if path.is_file() and os.access(path, os.X_OK):
             return path
     return None
@@ -45,12 +47,12 @@ def _oneshot_call(binary, operation, path, **params):
     if transport == "file":
         with tempfile.TemporaryFile() as output:
             subprocess.run([str(binary)], input=request, stdout=output, stderr=subprocess.PIPE,
-                           text=True, encoding="utf-8", check=True)
+                           text=True, encoding="utf-8", check=True, **hidden_process_options())
             output.seek(0)
             response = json.load(output)
     else:
         result = subprocess.run([str(binary)], input=request, capture_output=True,
-                                text=True, encoding="utf-8", check=True)
+                                text=True, encoding="utf-8", check=True, **hidden_process_options())
         response = json.loads(result.stdout)
     if not isinstance(response, dict) or response.get("protocol") != 1:
         raise ValueError("Rust Excel 协议不匹配")
@@ -80,7 +82,8 @@ class _ExcelSession:
             if self.process is None:
                 self.binary = str(binary)
                 self.process = subprocess.Popen([str(binary), "--serve"], stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                    **hidden_process_options())
             if str(binary) != self.binary:
                 return _oneshot_call(binary, operation, path, **params)
             key = None

@@ -153,7 +153,7 @@ class WorkbenchTests(unittest.TestCase):
             lazy_pages=True,
         )
         self.root = app
-        app.update_idletasks()
+        app.update()  # Process the native Windows WM_SIZE before inspecting geometry.
 
         last_button = app.nav_buttons[PAGE_NAMES[-1]]
         navigation_bottom = last_button.winfo_rooty() + last_button.winfo_height()

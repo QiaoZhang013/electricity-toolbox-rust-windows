@@ -797,6 +797,7 @@ class RuntimeTests(unittest.TestCase):
             with (
                 mock.patch("toolbox.runtime.sys.platform", "darwin"),
                 mock.patch("toolbox.runtime.shutil.which", return_value=None),
+                mock.patch("toolbox.runtime.Path.home", return_value=Path(folder)),
                 mock.patch.dict(os.environ, {"HOME": folder}),
             ):
                 self.assertEqual(node_executable(), str(local_node))

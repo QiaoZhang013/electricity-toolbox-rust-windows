@@ -118,7 +118,7 @@ class SectionAnalysisPageTests(unittest.TestCase):
         self.assertIn("80.0", command)
         self.assertNotIn("--keep-processed", command)
         self.assertNotIn("--no-keep-processed", command)
-        self.assertEqual(command[-1], "/tmp/prices.xlsx")
+        self.assertEqual(Path(command[-1]), Path("/tmp/prices.xlsx"))
 
 
 if __name__ == "__main__":

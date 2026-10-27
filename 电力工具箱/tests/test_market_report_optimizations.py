@@ -11,7 +11,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
-import fcntl
 
 from openpyxl import Workbook
 from pypdf import PdfReader, PdfWriter
@@ -296,9 +295,7 @@ class PdfPairPublicationTests(unittest.TestCase):
             sources = self.sources(root)
             output = root / "output"
             output.mkdir()
-            descriptor = os.open(output, os.O_RDONLY)
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with output_commit.output_directory_lock(output):
                 command = [sys.executable, "-c",
                            "from pathlib import Path; import sys; from gd_power_report.output_commit import publish_pdf_pair; "
                            "publish_pdf_pair(Path(sys.argv[1]), (Path(sys.argv[2]), Path(sys.argv[3])))",
@@ -310,8 +307,6 @@ class PdfPairPublicationTests(unittest.TestCase):
                 self.assertEqual(list(output.iterdir()), [])
                 # Independent report dates remain available.
                 output_commit.publish_pdf_pair(root / "other-date", sources)
-            finally:
-                os.close(descriptor)
             output_commit.publish_pdf_pair(output, sources)
             self.assertFalse(list(root.rglob("*.lock")))
 

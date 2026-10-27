@@ -68,7 +68,8 @@ class CredentialStoreTests(unittest.TestCase):
             self.assertEqual(result["username"], "new-account")
             self.assertEqual(result["outputDir"], "输出")
             self.assertFalse(result["headless"])
-            self.assertEqual(store.path.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":  # NTFS permissions are ACLs, not POSIX mode bits.
+                self.assertEqual(store.path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(list(store.path.parent.glob("*.tmp")), [])
 
     def test_incomplete_edits_and_failed_replace_preserve_saved_account(self):

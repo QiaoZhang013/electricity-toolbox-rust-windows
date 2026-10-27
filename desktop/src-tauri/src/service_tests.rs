@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn real_python_protocol_starts_without_a_gui_and_shuts_down_cleanly() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
-    let venv = root.join(".venv/bin/python");
-    let python = if venv.exists() { venv } else { PathBuf::from("python3") };
+    let venv = root.join(platform::venv_python());
+    let python = if venv.exists() { venv } else { PathBuf::from(if cfg!(windows) { "python" } else { "python3" }) };
     let folder = tempfile::tempdir().unwrap();
     let mut child = Command::new(python)
         .arg("-B").arg(root.join("desktop/python/service_bridge.py"))
@@ -27,7 +27,8 @@ fn real_python_protocol_starts_without_a_gui_and_shuts_down_cleanly() {
 
 #[test]
 fn backend_reports_a_dead_worker_without_writing_to_its_pipe() {
-    let mut child = Command::new("/bin/sh").args(["-c", "exit 7"])
+    let (shell, args) = if cfg!(windows) { ("cmd.exe", ["/c", "exit 7"]) } else { ("/bin/sh", ["-c", "exit 7"]) };
+    let mut child = Command::new(shell).args(args)
         .stdin(Stdio::piped()).spawn().unwrap();
     let input = child.stdin.take().unwrap();
     child.wait().unwrap();
