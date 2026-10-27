@@ -157,7 +157,9 @@ class ProcessRunner:
                             pass
                         time.sleep(.1)
                 process._toolbox_job.close()
-            elif process.poll() is None:
+            elif process.poll() is None or token.cancelled:
+                # The POSIX leader can exit while its owned group still has
+                # children. Cancellation must also reap those orphaned members.
                 self.terminate(process)
             stop_reader.set()
             reader.join(timeout=1)
