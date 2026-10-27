@@ -20,7 +20,7 @@ class PriceXlsxPackagingTests(unittest.TestCase):
             self.assertIn("--output", run.call_args.args[0])
 
     def test_managed_install_preserves_executable_mode(self):
-        binary = ROOT / "500kV断面分析/bin/toolbox-price-xlsx"
+        binary = ROOT / "500kV断面分析/bin" / ("toolbox-price-xlsx.exe" if os.name == "nt" else "toolbox-price-xlsx")
         if not binary.is_file():
             self.skipTest("build native/price-xlsx first")
         with tempfile.TemporaryDirectory() as tmp:
@@ -28,14 +28,15 @@ class PriceXlsxPackagingTests(unittest.TestCase):
             import shutil
             base = Path(tmp)
             payload = base / "payload"
-            name = "500kV断面分析/bin/toolbox-price-xlsx"
+            name = binary.relative_to(ROOT).as_posix()
             staged = payload / "app" / name
             staged.parent.mkdir(parents=True)
             shutil.copy2(binary, staged)
             adapter_name = "toolbox_native_excel.py"
             self.assertTrue(prepare_payload.runtime_source(Path(adapter_name)))
             shutil.copy2(ROOT / adapter_name, payload / "app" / adapter_name)
-            helpers = ["toolbox_native_compute.py", "toolbox_native_write.py", "toolbox_workbook_inspection.py"]
+            helpers = sorted(path.name for path in ROOT.glob("toolbox_*.py")
+                             if path.name != adapter_name)
             for helper in helpers:
                 self.assertTrue(prepare_payload.runtime_source(Path(helper)))
                 shutil.copy2(ROOT / helper, payload / "app" / helper)
@@ -47,6 +48,8 @@ class PriceXlsxPackagingTests(unittest.TestCase):
             }))
             installed = base / "installed"
             prepare_workspace.install(payload, installed)
+            installed_env = dict(os.environ, PYTHONPATH=str(installed))
+            installed_env.pop("TOOLBOX_NATIVE_BINARY", None)
             target = installed / name
             self.assertTrue(os.access(target, os.X_OK))
             self.assertEqual(target.read_bytes(), binary.read_bytes())
@@ -62,14 +65,15 @@ class PriceXlsxPackagingTests(unittest.TestCase):
                     self.assertEqual(response["sheets"][0]["rows"], [["电价", 123.45]])
             # Import only the installed adapter; its root must discover the
             # installed binary without consulting the source checkout.
-            subprocess.run([sys.executable, "-c",
+            result = subprocess.run([sys.executable, "-c",
                 "import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())); "
                 "from toolbox_native_excel import load_value_workbook; "
                 "b=load_value_workbook(sys.argv[1]); "
                 "assert b.active['B1'].value == 123.45; b.close()", str(workbook)],
-                cwd=installed, env=dict(os.environ, TOOLBOX_XLSX_BACKEND="rust"),
-                capture_output=True, text=True, check=True)
-            subprocess.run([sys.executable, "-c",
+                cwd=installed, env=dict(installed_env, TOOLBOX_XLSX_BACKEND="rust"),
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run([sys.executable, "-c",
                 "import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())); "
                 "import numpy as np; from openpyxl import Workbook,load_workbook; "
                 "from toolbox_native_write import save_workbook,save_frame; "
@@ -84,5 +88,6 @@ class PriceXlsxPackagingTests(unittest.TestCase):
                 "from toolbox_workbook_inspection import load_inspection_pair; "
                 "a,c=load_inspection_pair(sys.argv[1],columns=(1,),target_columns=(),sheet_filter=lambda n: True); "
                 "assert a['整合数据']['A2'].value==.125; a.close(); c.close()", str(workbook)],
-                cwd=installed, env=dict(os.environ, TOOLBOX_XLSX_BACKEND="rust",TOOLBOX_COMPUTE_BACKEND="rust"),
-                capture_output=True, text=True, check=True)
+                cwd=installed, env=dict(installed_env, TOOLBOX_XLSX_BACKEND="rust",TOOLBOX_COMPUTE_BACKEND="rust"),
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
