@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from toolbox_native_domain import invoke as _native_payload
+
 
 from playwright.sync_api import sync_playwright
 
@@ -64,6 +66,9 @@ def _json(response: Any, label: str) -> dict[str, Any]:
     if not response.ok:
         raise RuntimeError(f"{label}失败：HTTP {response.status}")
     payload = response.json()
+    result = _native_payload("market_payload", "api_payload", {"payload": payload, "label": label})
+    if result is not None:
+        return result
     if not isinstance(payload, dict):
         raise RuntimeError(f"{label}失败：接口返回格式不正确")
     if str(payload.get("retCode") or payload.get("code", "")).upper() not in {"T200", "200", ""}:
@@ -87,6 +92,9 @@ def _number(value: Any) -> float | None:
 
 
 def _period_for_date(periods: Any, target_date: date) -> dict[str, Any] | None:
+    result = _native_payload("market_payload", "period_for_date", {"periods": periods, "date": target_date.isoformat()})
+    if result is not None:
+        return result["value"]
     target = target_date.isoformat()
     candidates = [
         period
@@ -98,6 +106,9 @@ def _period_for_date(periods: Any, target_date: date) -> dict[str, Any] | None:
 
 
 def _period_metric(period: dict[str, Any], field: str) -> float | None:
+    result = _native_payload("market_payload", "period_metric", {"period": period, "field": field})
+    if result is not None:
+        return result["value"]
     if period is None:
         return None
     value = _number(period.get(field))
@@ -127,6 +138,9 @@ def _missing_west_history_dates(
     payload: dict[str, Any],
     target_date: date,
 ) -> list[date]:
+    result = _native_payload("market_payload", "missing_west_dates", {"payload": payload, "date": target_date.isoformat()})
+    if result is not None:
+        return [date.fromisoformat(day) for day in result]
     items = (payload.get("data") or {}).get("dataNetLoadDTOList") or []
     series = next(
         (item for item in items if str(item.get("loadType") or "") == "4"),
@@ -146,6 +160,11 @@ def _missing_west_history_dates(
 
 
 def _merge_load_payload(target: dict[str, Any], incoming: dict[str, Any]) -> None:
+    result = _native_payload("market_payload", "merge_load_payload", {"target": target, "incoming": incoming})
+    if result is not None:
+        target.clear()
+        target.update(result)
+        return
     target_data = target.setdefault("data", {})
     target_items = target_data.setdefault("dataNetLoadDTOList", [])
     incoming_items = (incoming.get("data") or {}).get("dataNetLoadDTOList") or []
@@ -173,6 +192,9 @@ def _thermal_unit_series(
     groups: tuple[str, str],
     data_type: str,
 ) -> list[list[float]] | None:
+    result = _native_payload("market_payload", "thermal_series", {"payload": payload, "groups": list(groups), "data_type": data_type})
+    if result is not None:
+        return result["value"]
     rows = payload.get("data") or []
     if not isinstance(rows, list):
         return None
@@ -244,12 +266,18 @@ def _thermal_unit_counts(
     groups: tuple[str, str],
     data_type: str,
 ) -> list[float] | None:
+    result = _native_payload("market_payload", "thermal_counts", {"payload": payload, "groups": list(groups), "data_type": data_type})
+    if result is not None:
+        return result["value"]
     series = _thermal_unit_series(payload, groups, data_type)
     return [sum(values) for values in zip(*series)] if series else None
 
 
 def _thermal_count_breakdown(payload, groups, data_type, *, allow_partial=False):
     """Use coal mode (first occurrence on ties) and the 19:00 gas count."""
+    result = _native_payload("market_payload", "thermal_breakdown", {"payload": payload, "groups": list(groups), "data_type": data_type, "allow_partial": allow_partial})
+    if result is not None:
+        return result
     result = {"basis": "coal_mode_gas_1900", "coal_basis": "mode", "gas_basis": "19:00", "tie_breaker": "earliest_occurrence",
               "coal": None, "gas": None}
     series = _thermal_unit_series(payload, groups, data_type)
@@ -277,6 +305,9 @@ def _thermal_count_breakdown(payload, groups, data_type, *, allow_partial=False)
 
 
 def _compare_thermal_breakdowns(current, comparison):
+    result = _native_payload("market_payload", "compare_thermal", {"current": current, "comparison": comparison})
+    if result is not None:
+        return result
     result = dict(current)
     for fuel in ("coal", "gas"):
         value, baseline = current.get(fuel), comparison.get(fuel)
@@ -288,6 +319,9 @@ def _compare_thermal_breakdowns(current, comparison):
 
 
 def _thermal_summary_card(current, baseline, label):
+    result = _native_payload("market_payload", "thermal_summary_card", {"current": current, "baseline": baseline, "label": label})
+    if result is not None:
+        return result
     value = sum(current[f] for f in ("coal", "gas")) if all(current.get(f) is not None for f in ("coal", "gas")) else None
     comparison = sum(baseline[f] for f in ("coal", "gas")) if all(baseline.get(f) is not None for f in ("coal", "gas")) else None
     card = {"label": label, "value": value, "unit": "台",
@@ -303,6 +337,9 @@ def _thermal_summary_card(current, baseline, label):
 
 def parse_day_ahead_thermal_unit_count_card(current_payload, previous_payload):
     """Compare coal modes and 19:00 gas counts with the prior day's day-ahead values."""
+    result = _native_payload("market_payload", "day_ahead_thermal_card", {"current": current_payload, "baseline": previous_payload})
+    if result is not None:
+        return result
     return _thermal_summary_card(
         _thermal_count_breakdown(current_payload, DAY_AHEAD_THERMAL_UNIT_COUNT_GROUPS, "1"),
         _thermal_count_breakdown(previous_payload, DAY_AHEAD_THERMAL_UNIT_COUNT_GROUPS, "1"),
@@ -312,6 +349,9 @@ def parse_day_ahead_thermal_unit_count_card(current_payload, previous_payload):
 
 def parse_realtime_thermal_unit_count_card(realtime_payload, day_ahead_payload):
     """Compare realtime coal mode and 19:00 gas count with same-day day-ahead values."""
+    result = _native_payload("market_payload", "realtime_thermal_card", {"current": realtime_payload, "baseline": day_ahead_payload})
+    if result is not None:
+        return result
     return _thermal_summary_card(
         _thermal_count_breakdown(realtime_payload, REALTIME_THERMAL_UNIT_COUNT_GROUPS, "2"),
         _thermal_count_breakdown(day_ahead_payload, DAY_AHEAD_THERMAL_UNIT_COUNT_GROUPS, "1"),
@@ -325,6 +365,9 @@ def _day_ahead_power_maximum_card(
     load_type: str,
     target_date: date,
 ) -> dict[str, Any]:
+    result = _native_payload("market_payload", "power_maximum_card", {"items": items, "label": label, "load_type": load_type, "date": target_date.isoformat(), "realtime": False})
+    if result is not None:
+        return result
     series = next(
         (
             item
@@ -371,6 +414,9 @@ def _realtime_power_maximum_card(
     load_type: str,
     target_date: date,
 ) -> dict[str, Any]:
+    result = _native_payload("market_payload", "power_maximum_card", {"items": items, "label": label, "load_type": load_type, "date": target_date.isoformat(), "realtime": True})
+    if result is not None:
+        return result
     series = next(
         (
             item
@@ -418,6 +464,9 @@ def parse_realtime_market_comparison(
     *, allow_partial: bool = False,
 ) -> list[dict[str, Any]]:
     """Build actual-load cards compared with the same day's day-ahead values."""
+    result = _native_payload("market_payload", "realtime_cards", {"load_payload": payload, "date": target_date.isoformat(), "allow_partial": allow_partial})
+    if result is not None:
+        return result
     items = (payload.get("data") or {}).get("dataNetLoadDTOList") or []
     load = next((item for item in items if str(item.get("loadType") or "") == "1"), None)
     if not load and not allow_partial:
@@ -465,6 +514,9 @@ def parse_market_board_status(
     target_date: date,
 ) -> list[dict[str, Any]]:
     """Use same-day day-ahead maintenance for the realtime card by user convention."""
+    result = _native_payload("market_payload", "market_board_status", {"payload": payload, "date": target_date.isoformat()})
+    if result is not None:
+        return result
     actual = _market_board_row(payload, target_date, data_type="2")
     day_ahead = _market_board_row(payload, target_date)
     online_units = _number((actual or {}).get("onlineUnit"))
@@ -488,6 +540,9 @@ def _market_board_row(
     *,
     data_type: str = "1",
 ) -> dict[str, Any] | None:
+    result = _native_payload("market_payload", "market_board_row", {"payload": payload, "date": target_date.isoformat(), "data_type": data_type})
+    if result is not None:
+        return result["value"]
     target = target_date.isoformat()
     rows = (payload.get("data") or {}).get("dataApplyConfigDOList") or []
     return next(
@@ -514,6 +569,9 @@ def _maintenance_comparison_card(
     *,
     realtime: bool = False,
 ) -> dict[str, Any]:
+    result = _native_payload("market_payload", "maintenance_card", {"current": current, "baseline": baseline, "date": comparison_date.isoformat(), "realtime": realtime})
+    if result is not None:
+        return result
     current_mw = _number((current or {}).get("overHaulCapacity"))
     baseline_mw = _number((baseline or {}).get("overHaulCapacity"))
     value = current_mw / 10 if current_mw is not None else None
@@ -542,6 +600,9 @@ def parse_day_ahead_market_cards(
     *, allow_partial: bool = False,
 ) -> list[dict[str, Any]]:
     """Build report-day day-ahead cards compared with the prior day's day-ahead."""
+    result = _native_payload("market_payload", "day_ahead_cards", {"load_payload": load_payload, "market_payload": market_payload, "date": target_date.isoformat(), "allow_partial": allow_partial})
+    if result is not None:
+        return result
     previous_date = target_date - timedelta(days=1)
     items = (load_payload.get("data") or {}).get("dataNetLoadDTOList") or []
     load = next((item for item in items if str(item.get("loadType") or "") == "1"), None)

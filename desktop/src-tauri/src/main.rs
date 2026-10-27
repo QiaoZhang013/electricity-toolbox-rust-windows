@@ -98,16 +98,22 @@ impl Backend {
         }
         let gui_python = runtime.join("python/电力工具箱.app/Contents/MacOS/电力工具箱");
         let native_bundle = ui && cfg!(target_os = "macos") && gui_python.is_file();
-        let mut command = Command::new(if native_bundle { &gui_python } else { &python });
+        let service_path = root.join("电力工具箱/bin/toolbox-service.exe");
+        let native_service = cfg!(windows) && !ui && service_path.is_file();
+        if cfg!(windows) && !ui && !cfg!(debug_assertions) && !native_service {
+            return Err("内置 Rust 任务服务不完整，请重新安装完整发行版。".into());
+        }
+        let mut command = Command::new(if native_service { &service_path } else if native_bundle { &gui_python } else { &python });
         platform::hide_console(&mut command);
         let entry = root.join(if ui { "desktop/python/native_bridge.py" } else { "desktop/python/service_bridge.py" });
         #[cfg(debug_assertions)]
         let entry = if ui { std::env::var_os("TOOLBOX_UI_TEST_ENTRY").map(PathBuf::from).unwrap_or(entry) } else { entry };
+        if native_service {
+            command.arg("--workspace").arg(&root).arg("--code-root").arg(&root).arg("--python").arg(&python);
+        } else {
+            command.args(["-u", "-B"]).arg(entry).arg("--workspace").arg(&root);
+        }
         command
-            .args(["-u", "-B"])
-            .arg(entry)
-            .arg("--workspace")
-            .arg(&root)
             .current_dir(&root)
             .env("PYTHONUTF8", "1")
             .env("PYTHONIOENCODING", "utf-8")
@@ -152,7 +158,7 @@ impl Backend {
         }
         let mut child = command
             .spawn()
-            .map_err(|e| format!("无法启动 Python：{e}"))?;
+            .map_err(|e| format!("无法启动业务进程：{e}"))?;
         let input = Arc::new(Mutex::new(child.stdin.take().ok_or("Python stdin unavailable")?));
         let output = child.stdout.take().ok_or("Python stdout unavailable")?;
         let errors = child.stderr.take().ok_or("Python stderr unavailable")?;

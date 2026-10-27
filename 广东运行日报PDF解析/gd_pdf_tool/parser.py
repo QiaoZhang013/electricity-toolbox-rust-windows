@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import re
 from math import ceil
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from toolbox_native_compute import unmix as native_unmix, with_native_session
+from toolbox_native_domain import invoke as _invoke_native_domain
 
 _pdf_inputs = ContextVar("pdf_inputs", default=None)
 
@@ -55,6 +57,20 @@ def _reuse_pdf(function):
 
 class ParseError(RuntimeError):
     """PDF 无法解析为报价容量区间时抛出。"""
+
+
+class _NativeBackendError(RuntimeError):
+    """Native infrastructure failure, distinct from optional PDF extraction."""
+
+
+def _native_domain(action_domain, action, payload):
+    try:
+        return _invoke_native_domain(action_domain, action, payload)
+    except ValueError as exc:
+        # Keep the parser/UI exception contract and strict native validation.
+        raise ParseError(str(exc)) from exc
+    except RuntimeError as exc:
+        raise _NativeBackendError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -216,7 +232,7 @@ def extract_declaration_info(pdf_path: Path) -> DeclarationInfo:
                 above_600 = above_600 or parsed.above_600
                 if zero_or_below and above_600:
                     return DeclarationInfo(zero_or_below, above_600, source="image-labels")
-    except ParseError:
+    except (ParseError, _NativeBackendError):
         raise
     except Exception:
         pass
@@ -226,6 +242,12 @@ def extract_declaration_info(pdf_path: Path) -> DeclarationInfo:
 def _read_declaration_tables(
     tables: list[list[list]], *, require_header: bool = False,
 ) -> DeclarationInfo:
+    native = _native_domain("pdf_chart", "declarations", {"tables": tables, "require_header": require_header})
+    if native is not None:
+        return DeclarationInfo(
+            DeclarationRow(**native["zero_or_below"]) if native["zero_or_below"] else None,
+            DeclarationRow(**native["above_600"]) if native["above_600"] else None,
+        )
     zero_or_below = above_600 = None
     for table in tables:
         header_indices: dict[str, int] | None = None
@@ -257,6 +279,9 @@ def extract_baseline_capacity(pdf_path: Path, declaration: DeclarationInfo | Non
     except Exception:
         return None
     joined = "\n".join(texts)
+    native = _native_domain("pdf_chart", "baseline_text", {"text": joined})
+    if native is not None:
+        return native["value"]
     candidates: list[str] = []
     for marker in ("零价及以", "零价及以下"):
         start = joined.find(marker)
@@ -358,9 +383,10 @@ def extract_quote_chart_image(pdf_path: Path) -> tuple[Image.Image, str]:
     # Render the expensive fallback only when it can affect the selection.
     try:
         crop = render_quote_chart_crop(pdf_path)
-        scored.append((_score_quote_chart_candidate(crop), crop, "rendered-page-crop"))
     except Exception:
         pass
+    else:
+        scored.append((_score_quote_chart_candidate(crop), crop, "rendered-page-crop"))
     if not scored:
         raise ParseError("未能提取报价分布图。")
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -423,7 +449,23 @@ def analyze_chart_image(
     baseline_capacity: float,
     declaration_info: DeclarationInfo | None = None,
 ) -> ChartAnalysis:
-    array = np.array(image.convert("RGB"))
+    rgb = image.convert("RGB")
+    native = _native_domain("pdf_chart", "analyze_chart", {
+        "width": rgb.width, "height": rgb.height,
+        "pixels": base64.b64encode(rgb.tobytes()).decode("ascii"),
+        "baseline": baseline_capacity,
+        "declaration": {
+            "zero_or_below": _declaration_row_to_dict(declaration_info.zero_or_below),
+            "above_600": _declaration_row_to_dict(declaration_info.above_600),
+        } if declaration_info else None,
+    })
+    if native is not None:
+        return ChartAnalysis(
+            [QuoteRow(**row) for row in native["rows"]],
+            [tuple(row) for row in native["pixel_counts"]],
+            native["scale_mw_per_pixel"], native["diagnostics"],
+        )
+    array = np.array(rgb)
     masks = _make_color_masks(array)
     top_y, baseline_y, y_spacing = _detect_plot_rows(array)
     masks = _select_palette_masks(masks, top_y, baseline_y)
@@ -498,6 +540,15 @@ def _rows_from_pixels(
     baseline_capacity: float,
     declaration_info: DeclarationInfo | None,
 ) -> list[QuoteRow]:
+    native = _native_domain("pdf_chart", "rows", {
+        "counts": pixel_counts, "scale": scale, "baseline": baseline_capacity,
+        "declaration": {
+            "zero_or_below": _declaration_row_to_dict(declaration_info.zero_or_below),
+            "above_600": _declaration_row_to_dict(declaration_info.above_600),
+        } if declaration_info else None,
+    })
+    if native is not None:
+        return [QuoteRow(**row) for row in native]
     rows = [
         QuoteRow(
             interval,
@@ -583,6 +634,9 @@ def _calibrate_above_600_rows(
 
 
 def _scale_values_to_total(values: list[float], target_total: float) -> list[float]:
+    native = _native_domain("pdf_chart", "scale_values", {"values": values, "target": target_total})
+    if native is not None:
+        return native
     rounded_target = round(target_total, 1)
     if rounded_target <= 0:
         return [0.0 for _ in values]
@@ -1236,6 +1290,13 @@ def _supported_bar_sources(
 
 
 def _score_quote_chart_candidate(image: Image.Image) -> float:
+    rgb = image.convert("RGB")
+    native = _native_domain("pdf_chart", "score_chart", {
+        "width": rgb.width, "height": rgb.height,
+        "pixels": base64.b64encode(rgb.tobytes()).decode("ascii"),
+    })
+    if native is not None:
+        return float(native)
     array = np.array(image.convert("RGB"))
     height, width, _ = array.shape
     if width < 400 or height < 180:

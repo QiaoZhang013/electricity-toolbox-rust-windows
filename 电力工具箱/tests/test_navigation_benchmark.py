@@ -48,7 +48,14 @@ def build(app, *args, **kwargs):
         button.event_generate("<ButtonPress-1>", x=20, y=10)
         button.event_generate("<ButtonRelease-1>", x=20, y=10)
     app.after(100, click)
-    app.after(800, app.destroy)
+    def finish_when_recorded():
+        path = Path(output)
+        if path.exists() and path.read_text().strip():
+            app.destroy()
+        else:
+            app.after(20, finish_when_recorded)
+    app.after(120, finish_when_recorded)
+    app.after(10000, app.destroy)
 spec = importlib.util.spec_from_file_location("navigation_benchmark", script)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

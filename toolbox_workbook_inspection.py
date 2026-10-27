@@ -3,6 +3,7 @@ from array import array
 from dataclasses import dataclass
 from xml.etree.ElementTree import iterparse
 from pathlib import Path
+import warnings
 
 from openpyxl.reader.excel import ExcelReader
 from openpyxl.styles import Border
@@ -11,6 +12,9 @@ from openpyxl.styles.numbers import BUILTIN_FORMATS, BUILTIN_FORMATS_MAX_SIZE
 from openpyxl.styles.stylesheet import apply_stylesheet
 from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter, range_boundaries
 from openpyxl.worksheet._reader import WorkSheetParser
+from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900, from_excel, from_ISO8601
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
+from toolbox_native_workbook import sheet_paths as native_sheet_paths, inspect as native_inspect
 
 
 class UnsupportedInspection(ValueError):
@@ -81,6 +85,92 @@ def load_inspection_pair(path, *, columns, target_columns, sheet_filter, request
     strings and errors. Merges in target columns below the two header rows
     require the full loader's border/style propagation and are rejected here.
     """
+    paths = native_sheet_paths(path)
+    if paths is not None:
+        try:
+            data = native_inspect(path, columns=columns, selected_sheets=[name for name in paths if sheet_filter(name)],
+                                  requests=requests, capture_cache=capture_cache)
+        except ValueError as exc:
+            if '工作表部件缺失' in str(exc):
+                raise UnsupportedInspection('工作表部件缺失') from exc
+            raise
+        if data is not None:
+            return _native_pair(data, columns=columns, target_columns=target_columns)
+    return _python_inspection_pair(path, columns=columns, target_columns=target_columns,
+        sheet_filter=sheet_filter, requests=requests, capture_cache=capture_cache)
+
+
+def _native_pair(data, *, columns, target_columns):
+    """Rebuild existing openpyxl public style/date wrappers from native scan data.
+
+    No workbook ZIP or sheet parser runs here. The style engine and date-epoch
+    conversions are kept identical to the original compatibility engine.
+    """
+    if 'unsupported' in data:
+        raise UnsupportedInspection(data['unsupported'])
+    from openpyxl import Workbook
+    book = Workbook()
+    book.epoch = CALENDAR_MAC_1904 if data['epoch1904'] else CALENDAR_WINDOWS_1900
+    class StyleArchive:
+        def read(self, name):
+            if name != 'xl/styles.xml' or not data['styles_xml']:
+                raise KeyError(name)
+            return data['styles_xml'].encode('utf-8')
+    apply_stylesheet(StyleArchive(), book)
+    formats = [BUILTIN_FORMATS.get(style.numFmtId, 'General') if style.numFmtId < BUILTIN_FORMATS_MAX_SIZE
+        else book._number_formats[style.numFmtId - BUILTIN_FORMATS_MAX_SIZE] for style in book._cell_styles]
+    def values(items):
+        result = {}
+        for item in items:
+            value, style, kind = item['value'], item['style'], item['kind']
+            if isinstance(value, dict) and 'number_text' in value:
+                # JSON has no arbitrary-precision integers or nonfinite numbers.
+                # Reconstruct only this compatibility representation; ZIP/XML
+                # scanning, numeric classification and all formula work are native.
+                value = int(value['number_text']) if value['integer'] else float(value['number_text'])
+            if isinstance(value, dict) and 'formula_type' in value:
+                attrs = {k:v for k,v in value['attributes'].items() if k != 't'}
+                value = (ArrayFormula(text=value['text'], ref=attrs.get('ref')) if value['formula_type'] == 'array'
+                         else DataTableFormula(**attrs))
+            elif value is not None and kind == 'd':
+                value = from_ISO8601(value)
+            elif isinstance(value, (int,float)) and not isinstance(value, bool) and kind in ('','n') and style in book._date_formats:
+                try:
+                    value = from_excel(value, book.epoch, timedelta=style in book._timedelta_formats)
+                except (OverflowError, ValueError):
+                    warnings.warn(f"Cell {get_column_letter(item['column'])}{item['row']} is marked as a date but the serial value {value} is outside the limits for dates. The cell will be treated as an error.")
+                    value = '#VALUE!'
+            result[(item['row'],item['column'])] = (value,style)
+        return result
+    formula_sheets, cache_sheets = {}, {}
+    for sheet in data['sheets']:
+        cells, cached = values(sheet['cells']), values(sheet['cached'])
+        styles = {(r,c):s for r,c,s in sheet['row_styles']}
+        max_row = sheet['max_row']
+        for merge in sheet['merges']:
+            left, top, right, bottom = range_boundaries(merge)
+            end_style = styles.get((bottom,right))
+            if end_style is not None:
+                start_style = styles.get((top,left),0)
+                start_border = book._borders[book._cell_styles[start_style].borderId]
+                end_border = book._borders[book._cell_styles[end_style].borderId]
+                if start_border + Border(right=end_border.right,bottom=end_border.bottom) != start_border:
+                    raise UnsupportedInspection('合并区域需要传播锚点边框')
+            if bottom > 2 and any(left <= column <= right for column in target_columns) and (left != right or top != bottom):
+                raise UnsupportedInspection('数据区合并单元格需要原样式处理')
+            max_row = max(max_row,bottom)
+            for column in columns:
+                if left <= column <= right:
+                    for row in range(top,bottom+1):
+                        if (row,column) != (top,left):
+                            cells.pop((row,column),None);cached.pop((row,column),None)
+        name=sheet['name']
+        formula_sheets[name] = InspectionSheet(name,cells,max_row,formats,book._cell_styles)
+        cache_sheets[name] = InspectionSheet(name,cached,max_row,formats,book._cell_styles)
+    return InspectionWorkbook(book.epoch,formula_sheets), InspectionWorkbook(book.epoch,cache_sheets)
+
+
+def _python_inspection_pair(path, *, columns, target_columns, sheet_filter, requests=None, capture_cache=True):
     reader = ExcelReader(Path(path), read_only=True, data_only=False, keep_links=False)
     try:
         reader.read_manifest()

@@ -33,6 +33,7 @@ if str(WORKSPACE) not in sys.path:
 from toolbox_native_excel import load_value_workbook, prefetch_workbooks
 from toolbox_native_write import save_workbook as save_native_workbook
 from toolbox_platform import open_path
+from toolbox_native_domain import invoke as invoke_domain, backend_mode, with_native_session
 
 FILE_TYPE_PATTERNS = {
     "realtime": "实时交易结果查询",
@@ -106,6 +107,7 @@ def default_output_path(input_dir: Path) -> Path:
     return input_dir / f"{input_dir.name}_汇总.xlsx"
 
 
+@with_native_session
 def run_summary(
     input_dir: Path,
     output_path: Path,
@@ -181,6 +183,23 @@ def _collect_station_units(station_dirs, logger):
 
 
 def parse_workbook(file_path: Path) -> list[tuple[str, list[NumericCell], list[NumericCell]]]:
+    if backend_mode() != "python":
+        workbook = load_value_workbook(file_path, data_only=True, read_only=True)
+        try:
+            sheets = []
+            for worksheet in workbook.worksheets:
+                worksheet.reset_dimensions()
+                sheets.append({"name": worksheet.title, "rows": [
+                    [{"value": str(cell.value) if not isinstance(cell.value, (str, int, float, bool, type(None))) else cell.value,
+                      "number_format": normalize_number_format(cell.number_format)} for cell in row]
+                    for row in worksheet.iter_rows()
+                ]})
+            result = invoke_domain("trading", "summary_parse", {"filename": file_path.name, "sheets": sheets})
+            if result is not None:
+                return [(item["unit_name"], [NumericCell(**cell) for cell in item["energy"]],
+                         [NumericCell(**cell) for cell in item["price"]]) for item in result]
+        finally:
+            workbook.close()
     workbook = load_value_workbook(file_path, data_only=True, read_only=True)
     result: list[tuple[str, list[NumericCell], list[NumericCell]]] = []
     try:
@@ -301,6 +320,9 @@ def infer_text_number_format(value: str) -> str:
 
 
 def sort_units(units: list[UnitData]) -> list[UnitData]:
+    result = invoke_domain("trading", "unit_order", {"units": [{"station_key": unit.station_key, "unit_name": unit.unit_name} for unit in units], "station_order": STATION_ORDER})
+    if result is not None:
+        return [units[index] for index in result]
     station_rank = {name: index for index, name in enumerate(STATION_ORDER)}
 
     def unit_rank(name: str) -> tuple[int, str]:

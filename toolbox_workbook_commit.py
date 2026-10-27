@@ -10,6 +10,8 @@ from contextlib import contextmanager, ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol, TypeVar
+from toolbox_native_domain import invoke
+from toolbox_native_workbook import NativeTransaction, transaction_available
 
 
 FileFingerprint = tuple[int, int, int, int, int, str]
@@ -17,6 +19,14 @@ FileFingerprint = tuple[int, int, int, int, int, str]
 
 def workbook_fingerprint(path: Path) -> FileFingerprint:
     """Identify the exact input, rejecting a file changed while it is hashed."""
+    try:
+        result = invoke("workbook", "fingerprint", {"path": str(path)})
+    except ValueError as exc:
+        if not path.exists():
+            raise FileNotFoundError(path) from exc
+        raise RuntimeError(str(exc)) from exc
+    if result is not None:
+        return tuple(result)
     def identity(info):
         return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
@@ -48,6 +58,11 @@ def assert_workbook_unchanged(path: Path, expected: FileFingerprint) -> None:
 @contextmanager
 def workbook_commit_lock(paths):
     """Serialize commits in each destination directory without leaving lock files."""
+    paths = tuple(paths)
+    if transaction_available():
+        with NativeTransaction((), False, paths=paths):
+            yield
+        return
     with ExitStack() as stack:
         for parent in sorted({Path(path).resolve().parent for path in paths}):
             try:
@@ -73,6 +88,12 @@ def commit_workbooks(
     create_backup: bool,
 ) -> dict[Path, Path | None]:
     try:
+        if transaction_available():
+            with NativeTransaction(prepared, create_backup) as transaction:
+                for index, item in enumerate(prepared):
+                    transaction.install(index)
+                    verify(item.original, item)
+                return transaction.finalize()
         with workbook_commit_lock(item.original for item in prepared):
             return _commit_locked(prepared, verify, create_backup=create_backup)
     finally:

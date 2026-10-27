@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.analyze_500kv_section_gaps import normalize_price_node_name, parse_topology_edges
+from src.analyze_500kv_section_gaps import normalize_price_node_name, parse_topology_edges, _native_invoke
 from src.node_city_catalog import REGIONS, USER_CONFIRMED_CITIES
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +42,9 @@ def labelled_rows(sheet, required: tuple[str, ...]):
 
 
 def topology_inventory(path: Path):
+    native = _native_invoke("sections", "topology", {"text": path.read_text(encoding="utf-8")})
+    if native is not None:
+        return set(native["nodes"]), set(native["connected"])
     edges, _ = parse_topology_edges(path)
     connected = {name for edge in edges for name in (edge.a, edge.b)}
     declared = set()
@@ -57,7 +60,34 @@ def topology_inventory(path: Path):
     return connected | declared, connected
 
 
+_CLASSIFICATION_RULES = ["仅包含拓扑名单及已确认接线中的节点，使用拓扑原名作稳定键",
+                      "按用户指定的4大区21市排序；不从接线片区标题推断行政地市",
+                      "站/变、厂/电厂及核电/核电厂写法规范化；A/B/C及省份后缀保留",
+                      "徐闻开关站、玄陆升压站、铜鼓电厂、阳西A厂使用2026-10-23用户确认的地市",
+                      "待核验与无法匹配节点单独保留，不纳入已分类菜单；不计算区域均价"]
+
+
 def classify(workbook: Path, topology: Path, *, confirmed_cities=None) -> dict:
+    confirmed = USER_CONFIRMED_CITIES if confirmed_cities is None else confirmed_cities
+    nodes, connected = topology_inventory(topology)
+    book = load_workbook(workbook, read_only=True, data_only=True)
+    try:
+        main = list(labelled_rows(book["各市节点名单"], ("地市", "去重节点数量", "节点名称（顿号分隔）")))
+        supplement = list(labelled_rows(book["补充节点待核验"], ("识别状态", "匹配地市", "补充记录统一节点名", "原始节点名称（逐条）")))
+    finally:
+        book.close()
+    result = _native_invoke("sections", "classify", dict(
+        nodes=sorted(nodes), connected=sorted(connected), main=main, supplement=supplement,
+        city_region=CITY_REGION, regions=REGIONS, confirmed_cities=confirmed))
+    if result is None:
+        return _classify_reference(workbook, topology, confirmed_cities=confirmed)
+    result["source"] = {"workbook": workbook.name, "sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
+                        "topology": topology.name, "topology_sha256": hashlib.sha256(topology.read_bytes()).hexdigest()}
+    result["rules"] = _CLASSIFICATION_RULES
+    return {key: result[key] for key in ("schema_version", "source", "rules", "summary", "regions", "nodes", "unclassified", "warnings")}
+
+
+def _classify_reference(workbook: Path, topology: Path, *, confirmed_cities=None) -> dict:
     confirmed_cities = USER_CONFIRMED_CITIES if confirmed_cities is None else confirmed_cities
     nodes, connected = topology_inventory(topology)
     book = load_workbook(workbook, read_only=True, data_only=True)
@@ -140,11 +170,7 @@ def classify(workbook: Path, topology: Path, *, confirmed_cities=None) -> dict:
     return {"schema_version": 1,
             "source": {"workbook": workbook.name, "sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
                        "topology": topology.name, "topology_sha256": hashlib.sha256(topology.read_bytes()).hexdigest()},
-            "rules": ["仅包含拓扑名单及已确认接线中的节点，使用拓扑原名作稳定键",
-                      "按用户指定的4大区21市排序；不从接线片区标题推断行政地市",
-                      "站/变、厂/电厂及核电/核电厂写法规范化；A/B/C及省份后缀保留",
-                      "徐闻开关站、玄陆升压站、铜鼓电厂、阳西A厂使用2026-10-23用户确认的地市",
-                      "待核验与无法匹配节点单独保留，不纳入已分类菜单；不计算区域均价"],
+            "rules": _CLASSIFICATION_RULES,
             "summary": {"topology_nodes": len(nodes), "connected_nodes": len(connected),
                         "classified_nodes": len(records) - len(unclassified), "unclassified_nodes": len(unclassified),
                         "source_listed_names": source_count},

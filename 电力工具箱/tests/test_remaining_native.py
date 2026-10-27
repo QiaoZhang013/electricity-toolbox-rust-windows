@@ -45,7 +45,10 @@ class IndexedAndFeatureTests(unittest.TestCase):
         for exogenous in ("legacy","none","published","lagged"):
             results = []
             for mode in ("python","auto"):
-                with patch.dict(os.environ, TOOLBOX_FEATURE_BACKEND=mode):
+                # This original test compares the two Python indexing paths
+                # bit for bit. Native reductions have a separate numeric parity
+                # contract and must not turn this into a both-Rust comparison.
+                with patch.dict(os.environ, TOOLBOX_FEATURE_BACKEND=mode, TOOLBOX_DOMAIN_BACKEND="python"):
                     results.append(build_features(frame,exogenous_mode=exogenous,holidays=True,supply=True,weather=True))
             assert_frame_equal(results[0][0],results[1][0],check_exact=True)
             assert_series_equal(results[0][1],results[1][1],check_exact=True)

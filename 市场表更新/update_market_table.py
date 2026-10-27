@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+
 import openpyxl
 from openpyxl.styles.numbers import is_date_format
 from openpyxl.utils import get_column_letter
@@ -25,9 +26,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 WORKSPACE = SCRIPT_DIR.parent
 if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
+from toolbox_native_domain import invoke as _native_payload
 from toolbox_auth_loader import load_login_module
 from toolbox_excel_read import read_cell_snapshots
 from toolbox_workbook_commit import assert_workbook_unchanged, workbook_commit_lock, workbook_fingerprint
+from toolbox_workbook_commit import commit_workbooks
+from toolbox_market_workbook import save_market_workbook
+from toolbox_native_excel import excel_session
 
 ONLINE_SCRIPTS_DIR = WORKSPACE / "上网电量抓取"
 REPORT_SCRIPTS_DIR = WORKSPACE / "每日生产经营情况汇报自动生成工具" / "scripts"
@@ -260,24 +265,33 @@ class WorkbookWriteSession:
                 delete=False,
             ) as temporary_file:
                 temporary_path = Path(temporary_file.name)
-            self.workbook.save(temporary_path)
+            if not save_market_workbook(self.workbook, self.path, temporary_path, self.expected_cells):
+                self.workbook.save(temporary_path)
             os.chmod(temporary_path, stat.S_IMODE(self.path.stat().st_mode))
-            saved = load_workbook_checked(temporary_path, read_only=True, data_only=False)
-            try:
-                actual_cells = read_cell_snapshots(saved, self.expected_cells)
-                for (sheet_name, coordinate), expected in self.expected_cells.items():
-                    actual = actual_cells[(sheet_name, coordinate)]
-                    if actual[0] != expected[0] or (
-                        expected[0] is not None and actual[1] != expected[1]
-                    ):
-                        raise RuntimeError(
-                            f"市场表保存后回读不一致：{sheet_name}!{coordinate}"
-                        )
-            finally:
-                saved.close()
-            with workbook_commit_lock((self.path,)):
-                assert_workbook_unchanged(self.path, self.source_fingerprint)
-                os.replace(temporary_path, self.path)
+            def verify(path, _prepared):
+                from toolbox_workbook_inspection import load_inspection_pair, UnsupportedInspection
+                requests = {}
+                for name, coordinate in self.expected_cells:
+                    requests.setdefault(name, set()).add(openpyxl.utils.cell.coordinate_to_tuple(coordinate))
+                columns = sorted({column for cells in requests.values() for _, column in cells})
+                try:
+                    saved, _ = load_inspection_pair(path, columns=columns, target_columns=columns,
+                        sheet_filter=lambda name: name in requests, requests=requests, capture_cache=False)
+                except UnsupportedInspection:
+                    saved = load_workbook_checked(path, read_only=True, data_only=False)
+                try:
+                    actual_cells = read_cell_snapshots(saved, self.expected_cells)
+                    for (sheet_name, coordinate), expected in self.expected_cells.items():
+                        actual = actual_cells[(sheet_name, coordinate)]
+                        if actual[0] != expected[0] or (expected[0] is not None and actual[1] != expected[1]):
+                            raise RuntimeError(f"市场表保存后回读不一致：{sheet_name}!{coordinate}")
+                finally:
+                    saved.close()
+            verify(temporary_path, None)
+            from types import SimpleNamespace
+            prepared = SimpleNamespace(original=self.path, temporary=temporary_path,
+                                       source_fingerprint=self.source_fingerprint)
+            commit_workbooks((prepared,), verify, create_backup=False)
         except PermissionError as exc:
             raise workbook_permission_error(self.path) from exc
         finally:
@@ -295,8 +309,9 @@ def workbook_write_session(path: Path | str):
     session = WorkbookWriteSession(path)
     token = _active_write_session.set(session)
     try:
-        yield session
-        session.commit()
+        with excel_session():
+            yield session
+            session.commit()
     finally:
         _active_write_session.reset(token)
         if session.workbook is not None:
@@ -486,6 +501,11 @@ def summarize_load_type(
     period_list_key: str,
     label: str,
 ) -> list[int | float]:
+    result = _native_payload("market_payload", "market_load_summary", {"dataset": dataset, "load_type": load_type, "date": run_date.isoformat(), "period_key": period_list_key, "label": label})
+    if result is not None:
+        if isinstance(result, dict) and "unavailable" in result:
+            raise RuntimeError(result["unavailable"])
+        return result
     series = select_load_type(dataset, load_type)
     periods = series.get(period_list_key) or []
     if not periods:
@@ -668,6 +688,9 @@ def extract_report_market_values(
     label: str,
     percent_fields: set[str] | None = None,
 ) -> list[int | float]:
+    result = _native_payload("market_payload", "report_values", {"payload": payload, "date": run_date.isoformat(), "fields": list(fields), "expected_count": expected_count, "label": label, "percent_fields": list(percent_fields or ())})
+    if result is not None:
+        return result
     rows = [row for row in payload if date_matches(row.get("date"), run_date)]
     if not rows:
         raise RuntimeError(f"{label}没有返回日期 {run_date.isoformat()} 的数据")
@@ -783,6 +806,9 @@ def extract_market_board_online_unit_values(
     payload: dict[str, Any],
     run_date: date,
 ) -> list[int | float]:
+    result = _native_payload("market_payload", "board_values", {"payload": payload, "date": run_date.isoformat()})
+    if result is not None:
+        return result
     rows = [
         row
         for row in payload.get("dataApplyConfigDOList") or []
@@ -833,6 +859,9 @@ def extract_spot_clearing_unit_count_values(
     payload: list[dict[str, Any]],
     run_date: date,
 ) -> list[int | float]:
+    result = _native_payload("market_payload", "clearing_counts", {"payload": payload, "date": run_date.isoformat()})
+    if result is not None:
+        return result
     rows_by_group = {
         str(row.get("dataItemGroup")): row
         for row in payload
@@ -887,6 +916,9 @@ def fetch_spot_clearing_unit_count_values(
 
 
 def extract_unit_cost_price_values(payload: list[dict[str, Any]]) -> list[int | float]:
+    result = _native_payload("market_payload", "cost_values", {"payload": payload, "unit_ids": list(UNIT_COST_PRICE_UNIT_IDS)})
+    if result is not None:
+        return result
     rows_by_unit_id: dict[str, dict[str, Any]] = {}
     for org_item in payload:
         for row in org_item.get("unitCostInfoDTOList") or []:

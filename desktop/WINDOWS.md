@@ -1,6 +1,6 @@
 # Windows 使用说明
 
-目标平台为 Windows 10/11 x64。保留原有 Tk 页面与业务字段，Rust/Tauri 负责桌面宿主，Rust 负责已有 Excel 读取和计算内核；原有 Python/Tk 和 Node 业务代码继续复用。
+目标平台为 Windows 10/11 x64。保留原有 Tk 页面与业务字段，Rust/Tauri 负责桌面宿主，Rust 任务服务负责调度与进程管理；业务计算、Excel 读取、定点更新与事务提交使用 Rust 后端。原有 Python/Tk、浏览器与文档引擎继续复用，详见 [迁移说明](../docs/RUST_MIGRATION.md)。
 
 ## 源码运行
 
@@ -34,9 +34,12 @@ GitHub Actions 的 Windows desktop 工作流对 Windows 核心执行回归，手
 - 原页面继续懒加载；后台日志批量刷新，切换页面不重新创建已经加载的业务页面。
 - 正常启动不创建隐藏的 WebView2 窗口，减少空闲浏览器进程；仅在启动故障时加载诊断窗口。
 - 沿用任务范围内的 Rust 进程复用及有界工作簿缓存；Rust Excel 结果封装直接移动元数据，减少大工作表复制。
+- 预测特征矩阵使用小端双精度二进制传输，PDF 图表使用紧凑 RGB 数据，避免逐单元格或逐像素 JSON。
+- Windows 安装版使用 Rust 后台任务服务；目录、表单和引擎信息由短时兼容进程读取，空闲时没有常驻 Python 任务服务。
 - Windows 子任务先挂起创建，加入专用 Job Object 后恢复；取消仅终止该任务的进程树。
 - 写入使用 Windows 内核互斥锁；保留原来的临时文件、原子替换、冲突检测和回滚规则。
 - `TOOLBOX_XLSX_BACKEND=python` 或 `rust` 可用于同样输入的对照测试；默认 `auto`。不是所有工作负载都会因 Rust 而加速。
+- `TOOLBOX_DOMAIN_BACKEND=python|rust|auto` 单独控制本轮业务内核；未设置时继承 Excel 后端选择。严格 `rust` 模式错误直接上报；已选择原生写入后不自动重试，防止重复写入。
 
 复现合成 Excel 性能对照：
 

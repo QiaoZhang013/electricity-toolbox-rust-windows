@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -13,6 +14,10 @@ TIME_HEADER_RE = re.compile(r"^\d{2}:\d{2}$")
 SECTION_2_RE = re.compile(r"^##\s+2\.")
 SECTION_NEXT_RE = re.compile(r"^##\s+3\.")
 MIN_SECTION_INTERVALS = 4
+
+# The toolkit launcher and standalone CLI share the same native domain adapter.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from toolbox_native_domain import invoke as _native_invoke
 
 
 @dataclass(frozen=True)
@@ -48,8 +53,55 @@ def analyze_section_gaps(
 
     edges, skipped_duplicates = parse_topology_edges(topology_path)
     time_headers, price_rows = read_price_workbook(workbook_path)
+    calculated = _native_invoke("sections", "analyze", dict(
+        edges=[dict(group=e.group, a=e.a, b=e.b) for e in edges],
+        time_headers=time_headers, price_rows=price_rows, threshold=threshold))
+    if calculated is None:
+        calculated = _calculate_reference(edges, time_headers, price_rows, threshold)
+    # JSON objects have no column-order contract; restore the original report schema.
+    schemas = {
+        "interval_details": ("group", "edge", "a", "b", "time", "price_a", "price_b", "move_a", "move_b", "diff_b_minus_a", "abs_diff", "low", "high", "direction"),
+        "edge_summary": ("group", "edge", "intervals", "windows", "max_abs_diff", "max_time", "max_low", "max_high", "main_direction", "direction_counts"),
+        "group_summary": ("group", "flagged_edges", "flagged_intervals", "max_abs_diff"),
+    }
+    for key, fields in schemas.items():
+        calculated[key] = [{field: row[field] for field in fields} for row in calculated[key]]
+    interval_records = calculated["interval_details"]
+    edge_summary = calculated["edge_summary"]
+    group_summary = calculated["group_summary"]
+    missing_nodes = calculated["missing_nodes"]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "500kv_section_price_gap_analysis.xlsx"
+
+    if export_workbook:
+        write_analysis_workbook(
+            output_path,
+            [
+                ("断面汇总", edge_summary),
+                ("逐时段明细", interval_records),
+                ("片区汇总", group_summary),
+            ],
+        )
+
+    return AnalysisResult(
+        output_path=output_path,
+        unique_edges=len(edges),
+        skipped_duplicate_edges=skipped_duplicates,
+        matched_nodes=calculated["matched_nodes"],
+        missing_nodes=missing_nodes,
+        flagged_edges=len({record["edge"] for record in interval_records}),
+        flagged_intervals=len(interval_records),
+        data=dict(edges=edges, skipped_duplicates=skipped_duplicates,
+                  time_headers=time_headers, price_rows=price_rows,
+                  edge_summary=edge_summary, interval_details=interval_records,
+                  group_summary=group_summary),
+    )
+
+
+def _calculate_reference(edges, time_headers, price_rows, threshold):
     topology_nodes = sorted({edge.a for edge in edges} | {edge.b for edge in edges})
-    matched_rows = match_price_rows(topology_nodes, price_rows)
+    matched_rows = _match_price_rows_reference(topology_nodes, price_rows)
     missing_nodes = [node for node in topology_nodes if node not in matched_rows]
 
     interval_records = []
@@ -111,35 +163,17 @@ def analyze_section_gaps(
     edge_summary = summarize_edges(interval_records, time_headers)
     group_summary = summarize_groups(interval_records)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "500kv_section_price_gap_analysis.xlsx"
-
-    if export_workbook:
-        write_analysis_workbook(
-            output_path,
-            [
-                ("断面汇总", edge_summary),
-                ("逐时段明细", interval_records),
-                ("片区汇总", group_summary),
-            ],
-        )
-
-    return AnalysisResult(
-        output_path=output_path,
-        unique_edges=len(edges),
-        skipped_duplicate_edges=skipped_duplicates,
-        matched_nodes=len(matched_rows),
-        missing_nodes=missing_nodes,
-        flagged_edges=len({record["edge"] for record in interval_records}),
-        flagged_intervals=len(interval_records),
-        data=dict(edges=edges, skipped_duplicates=skipped_duplicates,
-                  time_headers=time_headers, price_rows=price_rows,
-                  edge_summary=edge_summary, interval_details=interval_records,
-                  group_summary=group_summary),
-    )
+    return dict(edge_summary=edge_summary, group_summary=group_summary, interval_details=interval_records, matched_nodes=len(matched_rows), missing_nodes=missing_nodes, flagged_edges=len({record["edge"] for record in interval_records}))
 
 
 def parse_topology_edges(topology_path: Path) -> tuple[list[TopologyEdge], list[tuple[str, str, str]]]:
+    native = _native_invoke("sections", "topology", {"text": Path(topology_path).read_text(encoding="utf-8")})
+    if native is not None:
+        return [TopologyEdge(**edge) for edge in native["edges"]], [tuple(row) for row in native["duplicates"]]
+    return _parse_topology_edges_reference(topology_path)
+
+
+def _parse_topology_edges_reference(topology_path: Path) -> tuple[list[TopologyEdge], list[tuple[str, str, str]]]:
     in_section = False
     current_group = ""
     edges = []
@@ -212,12 +246,17 @@ def read_price_workbook(workbook_path: Path) -> tuple[list[str], list[dict[str, 
                 price_rows.append(
                     {
                         "raw_name": str(node_name).strip(),
-                        "normalized_name": normalize_price_node_name(node_name),
+                        "normalized_name": "",
                         "prices": prices,
                     }
                 )
 
             if price_rows:
+                names = [row["raw_name"] for row in price_rows]
+                normalized = _native_invoke("sections", "normalize", {"names": names})
+                normalized = normalized["price"] if normalized is not None else [normalize_price_node_name(name) for name in names]
+                for row, name in zip(price_rows, normalized):
+                    row["normalized_name"] = name
                 return column_map["time_headers"], price_rows
 
         raise ValueError(f"未找到包含“节点名称”和分时时间列的工作表: {workbook_path}")
@@ -226,6 +265,12 @@ def read_price_workbook(workbook_path: Path) -> tuple[list[str], list[dict[str, 
 
 
 def match_price_rows(topology_nodes: Iterable[str], price_rows: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    nodes = list(topology_nodes)
+    native = _native_invoke("sections", "match", {"nodes": nodes, "rows": price_rows})
+    return native if native is not None else _match_price_rows_reference(nodes, price_rows)
+
+
+def _match_price_rows_reference(topology_nodes, price_rows):
     by_normalized_name: dict[str, list[dict[str, object]]] = {}
     for row in price_rows:
         by_normalized_name.setdefault(row["normalized_name"], []).append(row)

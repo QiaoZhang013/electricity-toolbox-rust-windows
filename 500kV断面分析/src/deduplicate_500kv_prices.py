@@ -10,7 +10,7 @@ from typing import Iterable
 if __package__ in (None, ""):
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from src.analyze_500kv_section_gaps import normalize_price_node_name
+from src.analyze_500kv_section_gaps import normalize_price_node_name, _native_invoke
 from src.price_xlsx_backend import open_price_workbooks
 from src.classify_500kv_nodes import topology_inventory
 
@@ -103,11 +103,34 @@ def process_workbook(
     input_path = Path(input_path)
     output_path = Path(output_path) if output_path is not None else default_output_path(input_path)
     topology_nodes = load_topology_nodes(topology_path) if topology_path is not None else None
-    match_node = _indexed_topology_matcher(topology_nodes) if topology_nodes is not None else None
 
     source, output = open_price_workbooks(input_path)
 
     try:
+        sheets = []
+        for sheet in source.worksheets:
+            rows = sheet.iter_rows(values_only=True)
+            header = next(rows, ())
+            columns = _column_map(header)
+            if columns is None:
+                continue
+            sheets.append(dict(name=sheet.title, headers=columns["time_headers"], rows=[
+                [_cell(row, columns["node"]), _cell(row, columns["data_item"]),
+                 *[_cell(row, i) for i in columns["time_columns"]]]
+                for row in rows if not _is_empty_row(row)]))
+        native = _native_invoke("sections", "dedupe", dict(sheets=sheets, nodes=topology_nodes))
+        if native is not None:
+            if native["kept"] == 0:
+                raise ValueError(f"没有找到可输出的500kV节点行: {input_path}")
+            for sheet in native["sheets"]:
+                target = output.create_sheet(_safe_sheet_title(sheet["name"], output.sheetnames))
+                target.append(["节点名称", "数据项", *sheet["headers"]])
+                for row in sheet["rows"]:
+                    target.append(row)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output.save(output_path)
+            return ProcessResult(input_path, output_path, native["kept"], native["removed"], len(sheets))
+        match_node = _indexed_topology_matcher(topology_nodes) if topology_nodes is not None else None
         kept_rows = 0
         removed_rows = 0
         processed_sheets = 0

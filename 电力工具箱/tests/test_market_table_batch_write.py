@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import os
 import unittest
 from datetime import date
 from pathlib import Path
@@ -65,7 +66,7 @@ class MarketTableBatchWriteTests(unittest.TestCase):
                 changed.close()
 
             try:
-                with mock.patch.object(updated, "save", side_effect=corrupt_format):
+                with mock.patch.dict(os.environ, TOOLBOX_DOMAIN_BACKEND="python"), mock.patch.object(updated, "save", side_effect=corrupt_format):
                     with self.assertRaisesRegex(RuntimeError, "市场表保存后回读不一致"):
                         session.commit()
             finally:

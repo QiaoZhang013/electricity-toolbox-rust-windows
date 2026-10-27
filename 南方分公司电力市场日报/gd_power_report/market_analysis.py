@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from toolbox_native_domain import invoke as _native_payload
+
 
 
 _ENERGY_FIELDS = ("day_ahead_mwh", "realtime_mwh", "actual_mwh")
@@ -24,6 +26,9 @@ def classify_unit_status(
     actual: float | None,
 ) -> tuple[str, str]:
     """Classify a unit using the prescribed priority order and thresholds."""
+    result = _native_payload("market_payload", "classify_unit_status", {"hours": hours, "realtime": realtime, "actual": actual})
+    if result is not None:
+        return tuple(result)
     if _has_missing_hourly_value(hours) or realtime is None or actual is None:
         return "数据不足", "小时级日前、实时或实际电量存在缺失，无法完成完整日研判。"
     if realtime >= 0.05 and actual <= 0.01:
@@ -55,6 +60,9 @@ def classify_unit_status(
 
 
 def _daily_total(hours: list[dict[str, Any]], field: str) -> float | None:
+    result = _native_payload("market_payload", "daily_total", {"hours": hours, "field": field})
+    if result is not None:
+        return result["value"]
     if len(hours) != 24 or any(hour.get(field) is None for hour in hours):
         return None
     return round(sum(float(hour[field]) for hour in hours) / 10, 10)
@@ -62,6 +70,9 @@ def _daily_total(hours: list[dict[str, Any]], field: str) -> float | None:
 
 def summarize_realtime_units(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     """Summarize Task 1's ordered MWh hours as daily 万千瓦时 unit rows."""
+    result = _native_payload("market_payload", "summarize_units", {"parsed": parsed})
+    if result is not None:
+        return result
     rows: list[dict[str, Any]] = []
     for plant in parsed.get("plants", []):
         for unit in plant.get("units", []):

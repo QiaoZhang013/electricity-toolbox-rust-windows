@@ -40,7 +40,8 @@ def prepare(python_root: Path, forecast_workbook: Path | None = None):
         shutil.rmtree(child) if child.is_dir() else child.unlink()
     build_support.export_source(source, predicate=common.runtime_source)
     binary = source / '500kV断面分析/bin/toolbox-price-xlsx.exe'
-    run([sys.executable, ROOT / 'native/price-xlsx/build.py', '--output', binary])
+    run([sys.executable, ROOT / 'native/price-xlsx/build.py', '--output', binary,
+         '--service-output', source / '电力工具箱/bin/toolbox-service.exe'])
     common.validate_runtime_assets(source)
     defaults = payload / 'defaults'
     common.prepare_defaults(source, defaults)

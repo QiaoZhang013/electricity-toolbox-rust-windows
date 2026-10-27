@@ -30,6 +30,10 @@ _excel_session = ContextVar("native_excel_session", default=None)
 
 
 def native_binary():
+    override = os.environ.get("TOOLBOX_NATIVE_BINARY")
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        return candidate if candidate.is_file() and os.access(candidate, os.X_OK) else None
     name = "toolbox-price-xlsx.exe" if os.name == "nt" else "toolbox-price-xlsx"
     for path in (ROOT / "500kV断面分析/bin" / name,
                  ROOT / "native/price-xlsx/target/release" / name):

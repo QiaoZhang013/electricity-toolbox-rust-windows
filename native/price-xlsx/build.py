@@ -10,7 +10,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def build(destination: Path | None = None, target: str | None = None) -> Path:
+def build(destination: Path | None = None, target: str | None = None,
+          service_destination: Path | None = None) -> Path:
     cargo = shutil.which("cargo") or str(Path.home() / ".cargo/bin" / ("cargo.exe" if os.name == "nt" else "cargo"))
     crate = Path(__file__).resolve().parent
     args = [cargo, "build", "--release", "--locked", "--manifest-path", str(crate / "Cargo.toml")]
@@ -27,6 +28,11 @@ def build(destination: Path | None = None, target: str | None = None) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(binary, destination)
     destination.chmod(0o755)
+    service_name = "toolbox-service.exe" if windows else "toolbox-service"
+    service_destination = service_destination or ROOT / "电力工具箱/bin" / service_name
+    service_destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(artifacts / "release" / service_name, service_destination)
+    service_destination.chmod(0o755)
     return destination
 
 
@@ -34,5 +40,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--service-output", type=Path)
     args = parser.parse_args()
-    print(build(destination=args.output, target=args.target))
+    print(build(destination=args.output, target=args.target, service_destination=args.service_output))

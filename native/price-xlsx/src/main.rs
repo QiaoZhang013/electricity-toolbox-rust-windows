@@ -9,6 +9,12 @@ mod compute;
 mod frame;
 mod wps;
 mod market;
+mod sections;
+mod trading;
+mod forecast;
+mod pdf_chart;
+mod market_payload;
+mod workbook_ops;
 
 #[derive(Deserialize)]
 struct Request {
@@ -49,8 +55,14 @@ fn execute(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
     }
     match request.operation.as_str() {
         "capabilities" => Ok(
-            serde_json::json!({"protocol":1,"stream":true,"operations":["unmix","sheet_data","read_frame","write_frame","wps_url_choices","market_manual"]}),
+            serde_json::json!({"protocol":1,"stream":true,"operations":["unmix","sheet_data","read_frame","write_frame","wps_url_choices","market_manual","sections","trading","forecast","pdf_chart","market_payload","workbook"],"domains":["sections","trading","forecast","pdf_chart","market_payload","workbook"]}),
         ),
+        "sections" => Ok(serde_json::json!({"protocol":1,"result":sections::execute(&request.payload)?})),
+        "trading" => Ok(serde_json::json!({"protocol":1,"result":trading::execute(&request.payload)?})),
+        "forecast" => Ok(serde_json::json!({"protocol":1,"result":forecast::execute(&request.payload)?})),
+        "pdf_chart" => Ok(serde_json::json!({"protocol":1,"result":pdf_chart::execute(&request.payload)?})),
+        "market_payload" => Ok(serde_json::json!({"protocol":1,"result":market_payload::execute(&request.payload)?})),
+        "workbook" | "workbook_ops" => Ok(serde_json::json!({"protocol":1,"result":workbook_ops::execute(&request.payload)?})),
         "market_manual" => market::execute(&request.payload).map_err(Into::into),
         "wps_url_choices" => wps::url_choices(&request.payload),
         "unmix" => compute::unmix(&request.payload),
@@ -127,6 +139,13 @@ fn execute(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 fn main() {
+    if std::env::args().any(|a| a == "--workbook-transaction") {
+        if let Err(error) = workbook_ops::transaction_stdio() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if std::env::args().any(|a| a == "--serve") {
         use std::io::BufRead;
         for line in BufReader::new(io::stdin()).lines() {

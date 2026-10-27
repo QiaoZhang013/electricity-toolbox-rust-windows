@@ -25,7 +25,7 @@ def _date_lag(values, dates, slots, days):
     return pd.Series(lookup.reindex(keys).to_numpy(), index=values.index)
 
 
-def build_features(
+def _build_features_python(
     frame: pd.DataFrame, target: str = TARGET, *, exogenous_mode: str = "legacy",
     holidays: bool = False, supply: bool = False, weather: bool = False,
 ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
@@ -144,3 +144,64 @@ def build_features(
     if extra:
         X = pd.concat([X, pd.DataFrame(extra, index=X.index)], axis=1)
     return X.replace([np.inf, -np.inf], np.nan), y, identity
+
+
+def build_features(frame, target=TARGET, *, exogenous_mode="legacy", holidays=False, supply=False, weather=False):
+    from .data import _invoke_forecast as invoke
+    mode = os.environ.get("TOOLBOX_FEATURE_BACKEND", "auto")
+    if mode not in {"auto", "python"}:
+        raise ValueError(f"未知特征后端: {mode}")
+    from toolbox_native_domain import backend_mode
+    if mode == "python" or backend_mode() == "python":
+        return _build_features_python(frame, target, exogenous_mode=exogenous_mode,
+                                      holidays=holidays, supply=supply, weather=weather)
+    ordered = frame.sort_values(["日期", "时刻"]).reset_index(drop=True).copy()
+    ordered["日期"] = pd.to_datetime(ordered["日期"]).dt.normalize()
+    y = pd.to_numeric(ordered[target], errors="coerce").rename(target)
+    # Numeric columns use a temporary little-endian matrix, never Python scalar lists.
+    # Only date/slot identifiers and column descriptors cross JSON.
+    import tempfile
+    from pathlib import Path
+    columns = ordered.columns if exogenous_mode == "legacy" else FORECAST_COLUMNS
+    cal = calendar_features(ordered["日期"]) if holidays else pd.DataFrame()
+    with tempfile.TemporaryDirectory(prefix="toolbox-forecast-") as temporary:
+        source, output = Path(temporary) / "input.f64", Path(temporary) / "output.f64"
+        with source.open("wb") as stream:
+            def store(series):
+                values = series.to_numpy(dtype="<f8", na_value=np.nan)
+                offset = stream.tell()
+                np.ascontiguousarray(values, dtype="<f8").tofile(stream)
+                return {"offset": offset, "length": len(values)}
+            target_values = store(y)
+            raw = [{"name": c, "values": store(pd.to_numeric(ordered[c], errors="coerce"))}
+                   for c in columns if c in ordered and c not in METADATA_COLUMNS]
+            calendar = [{"name": c, "values": store(cal[c])} for c in cal]
+            weather_values = [{"name": c, "values": store(pd.to_numeric(ordered[c], errors="coerce"))}
+                              for c in WEATHER_COLUMNS if weather and c in ordered]
+        payload = {"dates": ordered["日期"].dt.strftime("%Y-%m-%d").tolist(),
+                   "slots": ordered["时刻"].tolist(), "target": target_values, "raw": raw,
+                   "exogenous_mode": exogenous_mode, "supply": supply,
+                   "calendar": calendar, "weather": weather_values,
+                   "binary": {"input_path": str(source), "output_path": str(output),
+                              "dtype": "<f8", "rows": len(ordered), "bytes": source.stat().st_size}}
+        result = invoke("forecast", "features", payload)
+        if result is None:
+            return _build_features_python(frame, target, exogenous_mode=exogenous_mode,
+                                          holidays=holidays, supply=supply, weather=weather)
+        names = result.get("columns")
+        expected_bytes = len(ordered) * len(names or []) * 8
+        if (not isinstance(names, list) or len(names) != len(set(names))
+                or result.get("dtype") != "<f8" or result.get("order") != "column-major"
+                or result.get("rows") != len(ordered) or result.get("bytes") != expected_bytes
+                or not output.is_file() or output.stat().st_size != expected_bytes):
+            raise ValueError("Rust 特征矩阵格式或长度不匹配")
+        matrix = np.fromfile(output, dtype="<f8").reshape((len(names), len(ordered))).T
+        X = pd.DataFrame(matrix, columns=names)
+    for c in ("slot", "weekday", "month", "day_of_year"):
+        X[c] = X[c].astype("int64" if c == "slot" else "int32")
+    for c in X:
+        if c == "is_weekend" or c.endswith(("__missing", "__weather_missing")):
+            X[c] = X[c].astype("int8")
+        elif c in cal:
+            X[c] = X[c].astype(cal[c].dtype)
+    return X, y, ordered[["日期", "时刻"]].copy()

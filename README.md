@@ -6,7 +6,7 @@
 
 ## Windows 版
 
-Windows x64 版继续采用 Rust/Tauri 宿主与 Rust Excel 后端，保留原有 15 页界面、字段和业务规则。Python/Tk 与部分 Node 业务模块仍然保留，并非全部代码已改写为 Rust。
+Windows x64 版采用 Rust/Tauri 宿主、Rust 任务服务和业务计算后端，保留原有 15 页界面、字段和业务规则。断面分析、交易与汇总、预测预处理、PDF 图表处理、接口数据整理、Excel 定点更新和事务提交均已接入 Rust。Python/Tk、浏览器登录、模型训练与文档引擎继续保留；迁移范围及验证口径见 [Rust 迁移说明](docs/RUST_MIGRATION.md)。
 
 源码运行：先双击 `00_启动/Windows初始化.cmd`，完成后双击 `00_启动/Windows启动.cmd`。安装包使用方式、构建步骤和验证边界见 [Windows 使用说明](desktop/WINDOWS.md)。下面的 DMG 和 Mac 初始化说明仅适用于 macOS。
 

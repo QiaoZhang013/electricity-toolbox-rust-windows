@@ -19,7 +19,9 @@ def main():
     from toolbox.workflows import execute
     from toolbox.service import RESULT_PREFIX
     request = json.loads(args.request.read_text(encoding="utf-8"))
-    result = execute(ToolPaths(args.workspace), request["tool_id"], request["action"], request["values"])
+    from toolbox_native_excel import excel_session
+    with excel_session():
+        result = execute(ToolPaths(args.workspace), request["tool_id"], request["action"], request["values"])
     print(RESULT_PREFIX + json.dumps(result, ensure_ascii=False, default=str), flush=True)
 
 

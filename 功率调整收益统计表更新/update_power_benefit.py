@@ -19,6 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+
 import openpyxl
 from openpyxl.formula.translate import Translator
 from openpyxl.utils.datetime import from_excel
@@ -28,6 +29,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 WORKSPACE = SCRIPT_DIR.parent
 if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
+from toolbox_native_domain import invoke as _native_payload
+from toolbox_native_domain import with_native_session
+import toolbox_native_workbook as native_workbook
 from toolbox_auth_loader import load_login_module
 from toolbox_credentials import read_login_config
 from toolbox_dates import parse_date_input
@@ -262,6 +266,9 @@ def inspect_workbook(path: Path, *, end_date: date, start_date: date | None = No
 
 
 def points24(raw: Any, *, label: str, scale: float = 1) -> tuple[float, ...] | None:
+    result = _native_payload("market_payload", "points24", {"raw": raw, "label": label, "scale": scale})
+    if result is not None:
+        return tuple(result["value"]) if result["value"] is not None else None
     if raw is None or raw == []:
         return None
     if not isinstance(raw, list) or len(raw) != 24:
@@ -283,6 +290,9 @@ def unique_unit_row(rows: Any, unit_id: str, *, label: str) -> dict[str, Any] | 
 
 
 def parse_forecast_payload(payload: dict, *, unit_id: str, fallback: bool = False) -> dict[str, tuple[float, ...]]:
+    result = _native_payload("market_payload", "forecast_payload", {"payload": payload, "unit_id": unit_id, "fallback": fallback})
+    if result is not None:
+        return {key: tuple(values) for key, values in result.items()}
     row = unique_unit_row(payload.get("data"), unit_id, label="功率预测")
     if row is None:
         return {}
@@ -298,6 +308,9 @@ def parse_forecast_payload(payload: dict, *, unit_id: str, fallback: bool = Fals
 
 def parse_trade_payload(payload: dict, *, unit_id: str, expected_dates: set[date],
                         data_type: int) -> dict[date, dict[str, tuple[float, ...]]]:
+    result = _native_payload("market_payload", "trade_payload", {"payload": payload, "unit_id": unit_id, "expected_dates": sorted(day.isoformat() for day in expected_dates), "data_type": data_type})
+    if result is not None:
+        return {date.fromisoformat(day): {key: tuple(values) for key, values in cols.items()} for day, cols in result.items()}
     data = payload.get("data") or {}
     rows = data.get("unitDateList", []) if isinstance(data, dict) else data
     if not isinstance(rows, list):
@@ -421,6 +434,9 @@ def expand_replaced_shared_formulas(text: str, changes: dict[str, float]) -> str
 
 
 def patch_sparse_sheet(data: bytes, changes: dict[str, float]) -> bytes:
+    native = native_workbook.patch_sparse_xml(data, changes)
+    if native is not None:
+        return native
     spot = shared_spot()
     text = expand_replaced_shared_formulas(data.decode("utf-8"), changes)
     original_text = text
@@ -466,6 +482,9 @@ def patch_sparse_sheet(data: bytes, changes: dict[str, float]) -> bytes:
 
 
 def request_recalculation(data: bytes) -> bytes:
+    native = native_workbook.recalculate_xml(data)
+    if native is not None:
+        return native
     text = data.decode("utf-8")
     match = re.search(r"<calcPr\b[^>]*/>", text)
     if match:
@@ -536,15 +555,16 @@ def prepare_workbook(plan: WorkbookPlan, series: dict[date, dict[str, tuple[floa
     try:
         sheet_paths = shared_spot().xlsx_sheet_paths(plan.path)
         part_changes = {sheet_paths[sheet]: values for sheet, values in changes.items()}
-        with zipfile.ZipFile(plan.path) as source, zipfile.ZipFile(temporary, "w") as output:
-            output.comment = source.comment
-            for info in source.infolist():
-                data = source.read(info.filename)
-                if info.filename in part_changes:
-                    data = patch_sparse_sheet(data, part_changes[info.filename])
-                elif info.filename == "xl/workbook.xml" and expectations:
-                    data = request_recalculation(data)
-                output.writestr(info, data)
+        if native_workbook.patch_package(plan.path, temporary, changes, recalculate=bool(expectations)) is None:
+            with zipfile.ZipFile(plan.path) as source, zipfile.ZipFile(temporary, "w") as output:
+                output.comment = source.comment
+                for info in source.infolist():
+                    data = source.read(info.filename)
+                    if info.filename in part_changes:
+                        data = patch_sparse_sheet(data, part_changes[info.filename])
+                    elif info.filename == "xl/workbook.xml" and expectations:
+                        data = request_recalculation(data)
+                    output.writestr(info, data)
         changed_parts = set(part_changes) | ({"xl/workbook.xml"} if expectations else set())
         shared_spot().verify_package_preservation(plan.path, temporary, changed_parts)
         verify_workbook(temporary, prepared)
@@ -555,6 +575,7 @@ def prepare_workbook(plan: WorkbookPlan, series: dict[date, dict[str, tuple[floa
         raise
 
 
+@with_native_session
 def run_update(paths: tuple[Path, ...], *, end_date: date, start_date: date | None = None,
                create_backup: bool = True, headed: bool = False) -> tuple[PreparedWorkbook, ...]:
     if start_date and end_date < start_date:

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def make_date_splits(
+def _make_date_splits_python(
     identity: pd.DataFrame,
     holdout_days: int = 14,
     validation_days: int = 7,
@@ -28,14 +28,14 @@ def make_date_splits(
 
 
 def previous_day_baseline(y: pd.Series) -> pd.Series:
-    return y.shift(96)
+    return _native_baseline(y, 96)
 
 
 def seven_day_baseline(y: pd.Series) -> pd.Series:
-    return y.shift(96 * 7)
+    return _native_baseline(y, 96 * 7)
 
 
-def evaluate_predictions(
+def _evaluate_predictions_python(
     y_true: np.ndarray | pd.Series,
     y_pred: np.ndarray | pd.Series,
     identity: pd.DataFrame,
@@ -46,3 +46,41 @@ def evaluate_predictions(
     daily = result.groupby("日期", as_index=False)["absolute_error"].mean().rename(columns={"absolute_error": "mae"})
     by_slot = result.groupby("时刻", as_index=False)["absolute_error"].mean().rename(columns={"absolute_error": "mae"})
     return metrics, daily, by_slot
+
+
+def make_date_splits(identity, holdout_days=14, validation_days=7, n_splits=3):
+    from .data import _invoke_forecast as invoke
+    result = invoke("forecast", "splits", {"dates": pd.to_datetime(identity["日期"]).dt.strftime("%Y-%m-%d").tolist(),
+        "holdout_days": holdout_days, "validation_days": validation_days, "n_splits": n_splits})
+    if result is None:
+        return _make_date_splits_python(identity, holdout_days, validation_days, n_splits)
+    return [(np.array(a, dtype=np.intp), np.array(b, dtype=np.intp)) for a, b in result["folds"]], np.array(result["holdout"], dtype=np.intp)
+
+
+def evaluate_predictions(y_true, y_pred, identity):
+    from .data import _invoke_forecast as invoke
+    def values(a):
+        return [None if pd.isna(v) else ("Infinity" if v == np.inf else "-Infinity" if v == -np.inf else float(v)) for v in np.asarray(a)]
+    result = invoke("forecast", "evaluate", {"dates": pd.to_datetime(identity["日期"]).dt.strftime("%Y-%m-%d").tolist(),
+        "slots": identity["时刻"].tolist(), "true": values(y_true), "pred": values(y_pred)})
+    if result is None:
+        return _evaluate_predictions_python(y_true, y_pred, identity)
+    daily = pd.DataFrame(result["daily"], columns=["日期", "mae"])
+    if pd.api.types.is_datetime64_any_dtype(identity["日期"].dtype):
+        daily["日期"] = pd.to_datetime(daily["日期"]).astype(identity["日期"].dtype)
+    else:
+        daily["日期"] = daily["日期"].astype(identity["日期"].dtype)
+    by_slot = pd.DataFrame(result["slots"], columns=["时刻", "mae"])
+    by_slot["时刻"] = by_slot["时刻"].astype(identity["时刻"].dtype)
+    for frame in (daily, by_slot):
+        frame["mae"] = frame["mae"].astype(float)
+    return {"mae": float(result["mae"]) if result["mae"] is not None else float("nan")}, daily, by_slot
+
+
+def _native_baseline(y, shift):
+    from .data import _invoke_forecast as invoke
+    result = invoke("forecast", "baseline", {"values": [None if pd.isna(v) else ("Infinity" if v == np.inf else "-Infinity" if v == -np.inf else float(v)) for v in y], "shift": shift})
+    if result is None:
+        return y.shift(shift)
+    dtype = y.dtype if (pd.api.types.is_float_dtype(y.dtype) or pd.api.types.is_extension_array_dtype(y.dtype)) else "float64"
+    return pd.Series(result, index=y.index, name=y.name, dtype=dtype)

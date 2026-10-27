@@ -5,7 +5,7 @@ import datetime as dt
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import openpyxl
@@ -15,7 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from generate_electricity_report import ReportBuilder, THERMAL_COMPANIES, fmt, load_value_workbook
+from generate_electricity_report import ReportBuilder, THERMAL_COMPANIES, fmt, load_value_workbook, invoke_domain
 
 
 DEFAULT_INPUT_DIR = Path.home() / "Downloads" / "haimen shouxian"
@@ -101,6 +101,9 @@ def discover_workbooks(input_dir: Path, start_date: dt.date | None, end_date: dt
 
 
 def normal_output_range(card: dict, clearing_mwh: float, clearing_price: float) -> NormalOutputRange:
+    result = invoke_domain("trading", "offer", {"card": card, "clearing_mwh": clearing_mwh, "clearing_price": clearing_price})
+    if result is not None:
+        return NormalOutputRange(**result["range"])
     if abs(clearing_mwh) <= 0.05:
         return NormalOutputRange(lower=0.0, upper=0.0, label="0")
 
@@ -159,6 +162,11 @@ def workbook_hour_deviations(path: Path, unit_filters: list[str] | None = None) 
     builder = load_report_builder(path)
     try:
         report_date = builder._report_date_text()
+        result = invoke_domain("trading", "deviations", {"date": report_date, "source_file": str(path),
+            "unit_order": list(builder.hourly), "hourly": builder.hourly,
+            "offer_cards": builder.offer_cards, "unit_filters": unit_filters or []})
+        if result is not None:
+            return [HourDeviation(**row) for row in result]
         rows = []
         for unit, hourly_points in builder.hourly.items():
             if unit_filters and not any(unit_filter in unit for unit_filter in unit_filters):
@@ -202,6 +210,9 @@ def workbook_hour_deviations(path: Path, unit_filters: list[str] | None = None) 
 
 
 def has_start_stop(rows: list[HourDeviation]) -> bool:
+    result = invoke_domain("trading", "start_stop", {"rows": [asdict(row) for row in rows]})
+    if result is not None:
+        return result
     by_unit: dict[str, list[HourDeviation]] = {}
     for row in rows:
         by_unit.setdefault(row.unit, []).append(row)
@@ -214,6 +225,9 @@ def has_start_stop(rows: list[HourDeviation]) -> bool:
 
 
 def rank_plant_days_with_exclusions(rows: list[HourDeviation], top: int) -> tuple[list[PlantDayScore], list[tuple[str, str]]]:
+    result = invoke_domain("trading", "rank", {"rows": [asdict(row) for row in rows], "top": top})
+    if result is not None:
+        return [PlantDayScore(**row) for row in result["scores"]], [tuple(item) for item in result["excluded"]]
     by_date: dict[str, list[HourDeviation]] = {}
     for row in rows:
         by_date.setdefault(row.date, []).append(row)

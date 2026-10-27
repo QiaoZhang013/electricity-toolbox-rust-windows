@@ -29,6 +29,8 @@ from toolbox_auth_loader import load_login_module
 from toolbox_dates import parse_date_input
 from toolbox_credentials import apply_credentials
 from toolbox_excel_read import read_cell_snapshots
+import toolbox_native_workbook as native_workbook
+from toolbox_native_domain import with_native_session
 from toolbox_workbook_commit import (
     FileFingerprint, assert_workbook_unchanged, commit_workbooks, workbook_fingerprint,
 )
@@ -585,6 +587,9 @@ PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def xlsx_sheet_paths(path: Path) -> dict[str, str]:
+    native = native_workbook.sheet_paths(path)
+    if native is not None:
+        return native
     with zipfile.ZipFile(path) as archive:
         workbook_root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
         rels_root = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
@@ -651,6 +656,9 @@ def _numeric_cell_xml(cell_ref: str, value: float, style: str | None) -> str:
 
 
 def extend_sheet_dates(xml_bytes: bytes, dates: dict[int, date], *, epoch) -> bytes:
+    native = native_workbook.extend_dates_xml(xml_bytes, {row: to_excel(day, epoch) for row, day in dates.items()})
+    if native is not None:
+        return native
     if not dates:
         return xml_bytes
     xml_text = xml_bytes.decode("utf-8")
@@ -712,6 +720,9 @@ def patch_sheet_xml(
     xml_bytes: bytes,
     row_values: dict[int, tuple[float, ...]],
 ) -> bytes:
+    native = native_workbook.patch_spot_rows(xml_bytes, row_values)
+    if native is not None:
+        return native
     xml_text = xml_bytes.decode("utf-8")
     for row_number, values in sorted(row_values.items()):
         row_pattern = re.compile(
@@ -750,6 +761,8 @@ def verify_package_preservation(
     patched: Path,
     changed_parts: set[str],
 ) -> None:
+    if native_workbook.verify_package(original, patched, changed_parts) is not None:
+        return
     with zipfile.ZipFile(original) as source, zipfile.ZipFile(patched) as result:
         if source.namelist() != result.namelist():
             raise RuntimeError(f"XLSX 包结构发生变化：{original.name}")
@@ -768,6 +781,11 @@ def patch_xlsx_values(
     date_extensions: dict[str, dict[int, date]] | None = None,
     epoch=None,
 ) -> None:
+    date_serials = {name: {row: to_excel(day, epoch) for row, day in dates.items()}
+                    for name, dates in (date_extensions or {}).items()}
+    if native_workbook.patch_package(original, temporary, {}, spot_rows=changes,
+                                     date_extensions=date_serials) is not None:
+        return
     sheet_paths = xlsx_sheet_paths(original)
     part_changes: dict[str, dict[int, tuple[float, ...]]] = {}
     part_dates = {}
@@ -912,6 +930,7 @@ def commit_prepared_workbooks(
     )
 
 
+@with_native_session
 def update_spot_price_workbooks(
     start_date: date,
     end_date: date,

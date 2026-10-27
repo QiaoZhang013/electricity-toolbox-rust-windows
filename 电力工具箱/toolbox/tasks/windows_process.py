@@ -3,6 +3,7 @@ import ctypes
 from ctypes import wintypes as w
 import msvcrt
 import os
+import time
 
 kernel = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel.CreateJobObjectW.argtypes = [w.LPVOID, w.LPCWSTR]
@@ -11,6 +12,14 @@ kernel.SetInformationJobObject.argtypes = [w.HANDLE, ctypes.c_int, w.LPVOID, w.D
 kernel.AssignProcessToJobObject.argtypes = [w.HANDLE, w.HANDLE]
 kernel.TerminateJobObject.argtypes = [w.HANDLE, w.UINT]
 kernel.CloseHandle.argtypes = [w.HANDLE]
+kernel.QueryInformationJobObject.argtypes = [w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD, w.LPVOID]
+kernel.GetProcessId.argtypes = [w.HANDLE]
+kernel.GetProcessId.restype = w.DWORD
+kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+kernel.OpenProcess.restype = w.HANDLE
+kernel.IsProcessInJob.argtypes = [w.HANDLE, w.HANDLE, ctypes.POINTER(w.BOOL)]
+kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+kernel.WaitForSingleObject.restype = w.DWORD
 kernel.CreateToolhelp32Snapshot.argtypes = [w.DWORD, w.DWORD]
 kernel.CreateToolhelp32Snapshot.restype = w.HANDLE
 kernel.OpenThread.argtypes = [w.DWORD, w.BOOL, w.DWORD]
@@ -62,8 +71,98 @@ class ProcessJob:
             raise
 
     def terminate(self):
-        if self.handle and not kernel.TerminateJobObject(self.handle, 1):
-            raise ctypes.WinError(ctypes.get_last_error())
+        if self.handle:
+            # Capture before termination: the job PID list can remove a dying
+            # process before its kernel process object becomes signalled.
+            self._capture_for_cleanup()
+            if not kernel.TerminateJobObject(self.handle, 1):
+                raise ctypes.WinError(ctypes.get_last_error())
+            self._capture_for_cleanup()
+
+    def _owned_process_handles(self):
+        capacity = 64
+        while True:
+            class Pids(ctypes.Structure):
+                _fields_ = [("assigned", w.DWORD), ("count", w.DWORD),
+                            ("pids", ctypes.c_size_t * capacity)]
+            listing = Pids()
+            if kernel.QueryInformationJobObject(self.handle, 3, ctypes.byref(listing), ctypes.sizeof(listing), None):
+                break
+            error = ctypes.get_last_error()
+            if error != 234:
+                raise ctypes.WinError(error)
+            capacity *= 2
+        handles = []
+        try:
+            for pid in listing.pids[:listing.count]:
+                handle = kernel.OpenProcess(0x00100000 | 0x1000, False, pid)
+                if not handle:
+                    error = ctypes.get_last_error()
+                    if error == 87:
+                        continue
+                    raise ctypes.WinError(error)
+                handles.append(handle)
+                member = w.BOOL()
+                if not kernel.IsProcessInJob(handle, self.handle, ctypes.byref(member)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if not member.value:
+                    kernel.CloseHandle(handles.pop())
+            return handles
+        except BaseException:
+            for handle in handles:
+                kernel.CloseHandle(handle)
+            raise
+
+    def _capture_for_cleanup(self):
+        self._cleanup_handles = getattr(self, "_cleanup_handles", [])
+        identities = set()
+        for handle in self._cleanup_handles:
+            pid = kernel.GetProcessId(handle)
+            if not pid:
+                raise ctypes.WinError(ctypes.get_last_error())
+            identities.add(pid)
+        captured = self._owned_process_handles()
+        while captured:
+            handle = captured.pop()
+            pid = kernel.GetProcessId(handle)
+            if not pid:
+                error = ctypes.get_last_error()
+                kernel.CloseHandle(handle)
+                for remaining in captured:
+                    kernel.CloseHandle(remaining)
+                raise ctypes.WinError(error)
+            if pid in identities:
+                kernel.CloseHandle(handle)
+            else:
+                self._cleanup_handles.append(handle)
+                identities.add(pid)
+
+    def wait_empty(self, timeout):
+        deadline = time.monotonic() + timeout
+        handles = getattr(self, "_cleanup_handles", None)
+        retained = handles is not None
+        if handles is None:
+            handles = self._owned_process_handles()
+        try:
+            while True:
+                if retained:
+                    self._capture_for_cleanup()
+                live = False
+                for handle in handles:
+                    result = kernel.WaitForSingleObject(handle, 0)
+                    if result == 258:
+                        live = True
+                    elif result != 0:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                if not live:
+                    return
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("后台进程清理尚未完成")
+                time.sleep(.01)
+        finally:
+            if not retained:
+                for handle in handles:
+                    kernel.CloseHandle(handle)
 
     def resume(self, pid):
         # Popen closes the initial thread handle. The process was created with
@@ -98,6 +197,9 @@ class ProcessJob:
 
     def close(self):
         if self.handle:
+            for handle in getattr(self, "_cleanup_handles", []):
+                kernel.CloseHandle(handle)
+            self._cleanup_handles = []
             kernel.CloseHandle(self.handle)
             self.handle = None
 

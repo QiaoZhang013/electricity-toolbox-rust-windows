@@ -1,4 +1,5 @@
 import argparse
+import json
 import html
 import math
 import pathlib
@@ -18,6 +19,13 @@ if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
 from toolbox_native_excel import load_value_workbook, excel_session
 from toolbox_platform import open_path
+from toolbox_native_domain import invoke as _invoke_domain, backend_mode, with_native_session
+
+
+def invoke_domain(domain, action, payload):
+    # CPython 3.12 changed sum(float) to Neumaier summation. Preserve the
+    # installed interpreter's arithmetic on both supported desktop platforms.
+    return _invoke_domain(domain, action, {"_compensated_sum": sys.version_info >= (3, 12), **payload})
 
 
 THERMAL_COMPANIES = ["汕头", "海门", "东莞"]
@@ -63,6 +71,9 @@ def normalize_pair_label(unit):
 
 
 def merge_offer_segments(segments):
+    result = invoke_domain("trading", "offer_merge", {"segments": segments})
+    if result is not None:
+        return result
     merged = []
     for segment in segments:
         if (
@@ -84,6 +95,9 @@ def to_hour_number(time_text):
 
 
 def classify_point(item, compare_mode):
+    result = invoke_domain("trading", "classify", {"item": item, "compare_mode": compare_mode})
+    if result is not None:
+        return result
     if compare_mode == "dayahead_vs_ml" and item.get("cost") not in (None, 0):
         high_or_low = item["da_price"] - item["cost"]
     else:
@@ -125,6 +139,25 @@ def read_cell_values(sheet, max_row, max_column):
 
     return cell_value
 
+def _domain_value(value):
+    if isinstance(value, datetime.time):
+        # Only horizontal exports coerce Excel time cells to H:00. Vertical
+        # and renewable records require an actual string containing ':'.
+        return {"__toolbox_cell_type": "time", "hour": value.hour}
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return str(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _domain_sheets(workbook, names=None):
+    return {name: [[_domain_value(value) for value in row]
+                   for row in workbook[name].iter_rows(values_only=True)]
+            for name in (names if names is not None else workbook.sheetnames)
+            if name in workbook.sheetnames}
+
+
 class ReportBuilder:
     def __init__(self, xlsx_path, out_path=None):
         self.xlsx_path = pathlib.Path(xlsx_path)
@@ -143,18 +176,30 @@ class ReportBuilder:
             "归湖": ["归湖"],
         }
 
+    @with_native_session
     def build(self):
         self.wb = load_value_workbook(self.xlsx_path, data_only=True, read_only=True,
                                       selected=("日前", "新", "快报", "运行补偿", *THERMAL_COMPANIES, *RENEWABLE_UNITS))
         try:
-            self._parse_summary()
-            self.offer_cards = self._parse_offer_cards()
-            self.hourly.update(self._parse_blocks("汕头", "汕头"))
-            self.hourly.update(self._parse_blocks("海门", "海门"))
-            self.hourly.update(self._parse_blocks("东莞", "东莞"))
-            self._parse_renewables()
-            self.compare_mode = "realtime_vs_dayahead" if self._has_realtime_data() else "dayahead_vs_ml"
-            self._fill_dongguan_summary()
+            domain = None
+            if backend_mode() != "python":
+                domain = invoke_domain("trading", "report", {
+                    "sheets": _domain_sheets(self.wb), "companies": self.companies,
+                })
+            if domain is None:
+                self._parse_summary()
+                self.offer_cards = self._parse_offer_cards()
+                self.hourly.update(self._parse_blocks("汕头", "汕头"))
+                self.hourly.update(self._parse_blocks("海门", "海门"))
+                self.hourly.update(self._parse_blocks("东莞", "东莞"))
+                self._parse_renewables()
+                self.compare_mode = "realtime_vs_dayahead" if self._has_realtime_data() else "dayahead_vs_ml"
+                self._fill_dongguan_summary()
+            else:
+                self.summary = domain["summary"]
+                self.hourly = {unit: domain["hourly"][unit] for unit in domain["unit_order"]}
+                self.offer_cards = domain["offer_cards"]
+                self.compare_mode = domain["compare_mode"]
             html_doc = self._render()
             self.out_path.write_text(html_doc, encoding="utf-8")
             return self.out_path
@@ -172,6 +217,11 @@ class ReportBuilder:
         return datetime.date.today().isoformat()
 
     def _parse_summary(self):
+        if backend_mode() != "python":
+            result = invoke_domain("trading", "report_summary", {"sheets": _domain_sheets(self.wb, ("日前", "新", "快报")), "available_sheets": self.wb.sheetnames})
+            if result is not None:
+                self.summary.update(result)
+                return
         if "日前" in self.wb.sheetnames:
             self._parse_legacy_summary(self.wb["日前"])
             return
@@ -285,6 +335,10 @@ class ReportBuilder:
             }
 
     def _parse_offer_cards(self):
+        if backend_mode() != "python":
+            result = invoke_domain("trading", "report_offers", {"rows": _domain_sheets(self.wb, ("运行补偿",))["运行补偿"]})
+            if result is not None:
+                return result
         ws_comp = self.wb["运行补偿"]
         cards = {}
         for window in iter_row_windows(ws_comp.iter_rows(values_only=True), 25):
@@ -329,6 +383,10 @@ class ReportBuilder:
         return cards
 
     def _parse_blocks(self, sheet_name, company_name):
+        if backend_mode() != "python":
+            result = invoke_domain("trading", "report_blocks", {"rows": _domain_sheets(self.wb, (sheet_name,))[sheet_name], "company": company_name})
+            if result is not None:
+                return {unit: result["hourly"][unit] for unit in result["unit_order"]}
         ws = self.wb[sheet_name]
         cell_value = read_cell_values(ws, 26, 21)
         row2 = [cell_value(2, c) for c in range(1, 22)]
@@ -418,6 +476,12 @@ class ReportBuilder:
         return blocks
 
     def _parse_renewables(self):
+        if backend_mode() != "python":
+            result = invoke_domain("trading", "report_renewables", {"sheets": _domain_sheets(self.wb, RENEWABLE_UNITS)})
+            if result is not None:
+                self.hourly.update({unit: result["hourly"][unit] for unit in RENEWABLE_UNITS})
+                self.summary.update(result["summary"])
+                return
         for sheet_name in RENEWABLE_UNITS:
             ws = self.wb[sheet_name]
             cell_value = read_cell_values(ws, 28, 31)
@@ -494,6 +558,11 @@ class ReportBuilder:
         }
 
     def _fill_dongguan_summary(self):
+        if backend_mode() != "python":
+            result = invoke_domain("trading", "fill_summary", {"summary": self.summary, "hourly": self.hourly, "companies": self.companies})
+            if result is not None:
+                self.summary = result
+                return
         all_units = [unit for units in self.companies.values() for unit in units if unit not in RENEWABLE_UNITS]
         for unit in all_units:
             if unit in self.hourly:
@@ -521,7 +590,31 @@ class ReportBuilder:
                 )
                 self.summary[unit] = base
 
+    def _native_offer(self, unit, clearing_mwh, clearing_price):
+        if backend_mode() == "python":
+            return None
+        card = self.offer_cards.get(unit) or None
+        signature = json.dumps(card, sort_keys=True)
+        cache = getattr(self, "_offer_domain_cache", {})
+        key = (unit, signature, clearing_mwh, clearing_price)
+        if key in cache:
+            return cache[key]
+        pairs = [(clearing_mwh, clearing_price)]
+        for point in self.hourly.get(unit, []):
+            pairs.extend((point.get(q, 0), point.get(p, 0)) for q, p in (("da", "da_price"), ("rt", "rt_price")))
+        pairs = list(dict.fromkeys(pairs))
+        result = invoke_domain("trading", "offers", {"card": card, "points": pairs})
+        if result is None:
+            return None
+        for pair, value in zip(pairs, result):
+            cache[(unit, signature, *pair)] = value
+        self._offer_domain_cache = cache
+        return cache[key]
+
     def _evaluate_offer_match(self, unit, clearing_mwh, clearing_price):
+        result = self._native_offer(unit, clearing_mwh, clearing_price)
+        if result is not None:
+            return tuple(result["evaluation"])
         card = self.offer_cards.get(unit)
         if not card:
             return None, None
@@ -558,6 +651,9 @@ class ReportBuilder:
         return plant_output, "匹配"
 
     def _offer_match_direction(self, unit, clearing_mwh, clearing_price):
+        result = self._native_offer(unit, clearing_mwh, clearing_price)
+        if result is not None:
+            return result["direction"]
         card = self.offer_cards.get(unit)
         if not card:
             return None
@@ -600,6 +696,9 @@ class ReportBuilder:
         return "正常"
 
     def _normal_output_range(self, unit, clearing_mwh, clearing_price):
+        result = self._native_offer(unit, clearing_mwh, clearing_price)
+        if result is not None:
+            return result["range"]["label"]
         card = self.offer_cards.get(unit)
         if not card:
             return "-"
@@ -640,6 +739,9 @@ class ReportBuilder:
         return f"{fmt(lower)}-{fmt(upper)}MW"
 
     def _company_summary(self, company_name, units):
+        result = invoke_domain("trading", "company_summary", {"company": company_name, "units": units, "summary": self.summary, "compare_mode": self.compare_mode})
+        if result is not None:
+            return result
         if self.compare_mode == "dayahead_vs_ml" and company_name in self.summary:
             item = dict(self.summary[company_name])
             item["ml_price_avg"] = item.get("ml_price_avg", item.get("dev_price", 0) + item.get("da_price", 0))
@@ -676,6 +778,9 @@ class ReportBuilder:
         return item
 
     def _representative_points(self, units, limit_per_type=5):
+        result = invoke_domain("trading", "representative", {"units": units, "hourly": self.hourly, "limit": limit_per_type, "compare_mode": self.compare_mode})
+        if result is not None:
+            return result
         points = []
         for unit in units:
             for item in self.hourly.get(unit, []):

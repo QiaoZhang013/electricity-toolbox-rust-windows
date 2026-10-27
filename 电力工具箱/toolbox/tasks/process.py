@@ -125,7 +125,8 @@ class ProcessRunner:
         try:
             while process.poll() is None or not stream_closed:
                 if token.cancelled:
-                    self.terminate(process)
+                    # The finally barrier retains ownership and retries cleanup
+                    # before this cancellation can leave the runner.
                     raise TaskCancelled("任务已取消")
                 try:
                     line = lines.get(timeout=0.05)
@@ -142,11 +143,23 @@ class ProcessRunner:
                 raise ProcessExecutionError(returncode)
             return ProcessResult(returncode)
         finally:
-            if process.poll() is None:
+            if os.name == "nt":
+                # Keep the task and job owned until termination is confirmed for
+                # every captured member, including independent-stdio children.
+                while True:
+                    try:
+                        self.terminate(process)
+                        break
+                    except (OSError, TimeoutError, subprocess.TimeoutExpired) as error:
+                        try:
+                            on_output(f"后台进程清理尚未确认，保留所有权并重试：{error}\n")
+                        except Exception:
+                            pass
+                        time.sleep(.1)
+                process._toolbox_job.close()
+            elif process.poll() is None:
                 self.terminate(process)
             stop_reader.set()
-            if os.name == "nt":
-                process._toolbox_job.close()
             reader.join(timeout=1)
             if process.stdout is not None:
                 process.stdout.close()
@@ -158,6 +171,7 @@ class ProcessRunner:
             job = getattr(process, "_toolbox_job", None)
             if job is not None:
                 job.terminate()
+                job.wait_empty(self.terminate_timeout)
             elif process.poll() is None:
                 # Legacy TaskRegistry callers can register a plain Popen.
                 process.terminate()

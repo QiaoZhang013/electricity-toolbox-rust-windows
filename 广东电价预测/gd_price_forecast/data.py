@@ -29,10 +29,18 @@ def _normalize(frame: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"缺少必要字段: {sorted(missing)}")
     result = frame.copy()
-    result["日期"] = pd.to_datetime(result["日期"], errors="raise").dt.normalize()
+    result["日期"] = pd.to_datetime(result["日期"], errors="raise")
     parsed_time = pd.to_datetime(result["时刻"].astype(str), format="mixed", errors="coerce")
     if parsed_time.isna().any():
         raise ValueError("时刻字段包含无法解析的值")
+    invoke = _invoke_forecast
+    native = invoke("forecast", "normalize", {"dates": result["日期"].dt.strftime("%Y-%m-%d").tolist(),
+                                               "slots": parsed_time.dt.strftime("%H:%M:%S").tolist()})
+    if native is not None:
+        result["日期"] = pd.to_datetime(native["dates"]).astype(result["日期"].dtype)
+        result["时刻"] = native["slots"]
+        return result.iloc[native["order"]].reset_index(drop=True)
+    result["日期"] = result["日期"].dt.normalize()
     result["时刻"] = parsed_time.dt.strftime("%H:%M")
     return result.sort_values(["日期", "时刻"]).reset_index(drop=True)
 
@@ -44,7 +52,7 @@ def load_model_data(path: Path | str) -> pd.DataFrame:
     return frame
 
 
-def validate_quarter_hour_grain(frame: pd.DataFrame) -> None:
+def _validate_quarter_hour_grain_python(frame: pd.DataFrame) -> None:
     normalized = _normalize(frame)
     if normalized.duplicated(["日期", "时刻"]).any():
         raise ValueError("日期+时刻存在重复记录")
@@ -61,7 +69,7 @@ def validate_quarter_hour_grain(frame: pd.DataFrame) -> None:
         raise ValueError(f"日期不连续，缺少: {missing.strftime('%Y-%m-%d').tolist()}")
 
 
-def split_labeled_prediction_dates(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _split_labeled_prediction_dates_python(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     normalized = _normalize(frame)
     completeness = normalized.groupby("日期", observed=True)[TARGET].apply(lambda s: s.notna().all())
     partial = normalized.groupby("日期", observed=True)[TARGET].apply(lambda s: s.notna().any() and s.isna().any())
@@ -72,3 +80,34 @@ def split_labeled_prediction_dates(frame: pd.DataFrame) -> tuple[pd.DataFrame, p
         normalized[normalized["日期"].isin(labeled_dates)].copy(),
         normalized[~normalized["日期"].isin(labeled_dates)].copy(),
     )
+
+
+def _native_frame_payload(frame):
+    return {"dates": frame["日期"].dt.strftime("%Y-%m-%d").tolist(), "slots": frame["时刻"].tolist(),
+            "target": [None if pd.isna(v) else 1.0 for v in frame[TARGET]]}
+
+
+def validate_quarter_hour_grain(frame):
+    invoke = _invoke_forecast
+    normalized = _normalize(frame)
+    if invoke("forecast", "grain", _native_frame_payload(normalized)) is None:
+        _validate_quarter_hour_grain_python(frame)
+
+
+def split_labeled_prediction_dates(frame):
+    invoke = _invoke_forecast
+    normalized = _normalize(frame)
+    result = invoke("forecast", "labeled", _native_frame_payload(normalized))
+    if result is None:
+        return _split_labeled_prediction_dates_python(frame)
+    return normalized.iloc[result["labeled"]].copy(), normalized.iloc[result["future"]].copy()
+
+
+def _invoke_forecast(domain, action, payload):
+    """Keep the public validation API's ValueError while retaining native detail."""
+    import subprocess
+    from toolbox_native_domain import invoke
+    try:
+        return invoke(domain, action, payload)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError((exc.stderr or str(exc)).strip()) from exc

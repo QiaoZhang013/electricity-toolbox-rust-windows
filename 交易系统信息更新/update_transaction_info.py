@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
+
 from xml.etree import ElementTree
 
 import openpyxl
@@ -25,6 +26,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 WORKSPACE_DIR = SCRIPT_DIR.parent
 if str(WORKSPACE_DIR) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_DIR))
+from toolbox_native_domain import invoke as _native_payload
+from toolbox_native_domain import with_native_session
+import toolbox_native_workbook as native_workbook
 from toolbox_auth_loader import load_login_module
 from toolbox_dates import parse_date_input
 from toolbox_credentials import apply_credentials
@@ -181,6 +185,9 @@ def summarize_load_type(
     period_list_key: str,
     label: str,
 ) -> tuple[int | float, ...]:
+    result = _native_payload("market_payload", "transaction_load_summary", {"dataset": dataset, "load_type": load_type, "date": run_date.isoformat(), "period_key": period_list_key, "label": label})
+    if result is not None:
+        return tuple(result)
     series = next(
         (row for row in _payload_rows(dataset) if str(row.get("loadType") or "") == load_type),
         None,
@@ -381,6 +388,9 @@ PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def xlsx_sheet_paths(path: Path) -> dict[str, str]:
+    native = native_workbook.sheet_paths(path)
+    if native is not None:
+        return native
     with zipfile.ZipFile(path) as archive:
         workbook_root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
         rels_root = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
@@ -469,6 +479,23 @@ def _build_group_rows(
     return "".join(rows)
 
 
+def _native_append_rows(template_start, pairs, epoch):
+    first_row = template_start + GROUP_HEIGHT
+    native_rows = []
+    for index, pair in enumerate(pairs):
+        for offset, category in enumerate(CATEGORY_ORDER):
+            target_row = first_row + index * GROUP_HEIGHT + offset
+            changes = {}
+            if offset == 0:
+                changes[f"C{target_row}"] = to_excel(pair.day_ahead_date, epoch)
+                changes[f"J{target_row}"] = to_excel(pair.actual_date, epoch)
+            if category != "西电":
+                changes.update((f"{column}{target_row}", value) for column, value in zip(("E", "F", "G", "H"), pair.day_ahead[category]))
+            changes.update((f"{column}{target_row}", value) for column, value in zip(("L", "M", "N", "O"), pair.actual[category]))
+            native_rows.append(dict(source_row=template_start + offset, target_row=target_row, changes=changes))
+    return native_rows
+
+
 def patch_sheet_xml(
     xml_bytes: bytes,
     *,
@@ -476,6 +503,10 @@ def patch_sheet_xml(
     pairs: tuple[DailyLoadPair, ...],
     epoch,
 ) -> tuple[bytes, int, int]:
+    first_row = template_start + GROUP_HEIGHT
+    native = native_workbook.append_rows_xml(xml_bytes, _native_append_rows(template_start, pairs, epoch))
+    if native is not None:
+        return native, first_row, first_row + (len(pairs) - 1) * GROUP_HEIGHT + 5
     xml_text = xml_bytes.decode("utf-8")
     first_row = template_start + GROUP_HEIGHT
     appended: list[str] = []
@@ -504,6 +535,8 @@ def patch_sheet_xml(
 
 
 def verify_package_preservation(original: Path, patched: Path, changed_part: str) -> None:
+    if native_workbook.verify_package(original, patched, {changed_part}) is not None:
+        return
     with zipfile.ZipFile(original) as source, zipfile.ZipFile(patched) as result:
         if source.namelist() != result.namelist():
             raise RuntimeError(f"XLSX 包结构发生变化：{original.name}")
@@ -529,6 +562,11 @@ def _write_patched_workbook(
         epoch = workbook.epoch
     finally:
         workbook.close()
+    if native_workbook.patch_package(original, temporary, {},
+            append={SHEET_NAME: _native_append_rows(template_start, pairs, epoch)}) is not None:
+        verify_package_preservation(original, temporary, sheet_part)
+        first_row = template_start + GROUP_HEIGHT
+        return first_row, first_row + (len(pairs) - 1) * GROUP_HEIGHT + 5
     bounds: tuple[int, int] | None = None
     with zipfile.ZipFile(original, "r") as source, zipfile.ZipFile(temporary, "w") as output:
         for info in source.infolist():
@@ -654,6 +692,7 @@ def commit_prepared_workbook(
     )[prepared.original]
 
 
+@with_native_session
 def update_workbook(
     workbook_path: Path,
     start_date: date | None,
