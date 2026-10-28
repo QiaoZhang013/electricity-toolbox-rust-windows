@@ -56,9 +56,11 @@ COMPANY_DISPLAY_NAME = {
     "华能广东汕头海上风电有限责任公司": "海风",
     "华能（汕头金平）新能源有限责任公司": "金平",
     "华能（潮州潮安）新能源有限责任公司": "潮安",
+    "清远电厂": "清远",
 }
 
-COMPANY_DISPLAY_ORDER = ["汕头", "海门", "东莞", "海风", "金平", "潮安"]
+# Append new companies so existing workbook rows/WPS region mappings stay stable.
+COMPANY_DISPLAY_ORDER = ["汕头", "海门", "东莞", "海风", "金平", "潮安", "清远"]
 
 
 @dataclass

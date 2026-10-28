@@ -24,6 +24,7 @@ class ReportExportReuseTests(unittest.TestCase):
         rows = [
             {"company": "汕头电厂", "unit": "#1机组", "time": "00:00", "onlineEle": 12.5},
             {"company": "汕头电厂", "unit": "#1机组", "time": "01:00", "onlineEle": 3.25},
+            {"company": "清远电厂", "unit": "#2机组", "time": "00:00", "onlineEle": 6.75},
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = report_export.save_excel("2026-09-24", rows, Path(directory))
@@ -35,6 +36,9 @@ class ReportExportReuseTests(unittest.TestCase):
                 self.assertEqual(12.5, sheet["A3"].value)
                 self.assertEqual(3.25, sheet["A4"].value)
                 self.assertEqual("General", sheet["A3"].number_format)
+                self.assertEqual("清远 实际上网电量（万千瓦时）", sheet["A28"].value)
+                self.assertEqual("2号机", sheet["A29"].value)
+                self.assertEqual(6.75, sheet["A30"].value)
             finally:
                 workbook.close()
 
