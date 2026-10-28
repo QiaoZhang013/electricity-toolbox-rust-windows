@@ -122,6 +122,46 @@ class WpsLoginStatusTests(unittest.TestCase):
                 )
         stop.assert_not_called()
 
+    def test_transient_endpoint_failure_keeps_visible_login_browser(self):
+        playwright = mock.Mock()
+        browser = playwright.chromium.connect_over_cdp.return_value
+        browser.contexts = [self.context]
+        with (
+            mock.patch.object(self.module, "try_resolve_cdp_endpoint", side_effect=[None, None, "endpoint"]),
+            mock.patch.object(self.module, "managed_chrome_pid", return_value=123),
+            mock.patch.object(self.module, "managed_chrome_launch_version", return_value=0),
+            mock.patch.object(self.module, "managed_chrome_is_headless", return_value=False),
+            mock.patch.object(self.module, "stop_managed_chrome") as stop,
+            mock.patch.object(self.module, "ensure_wps_cdp_page"),
+            mock.patch.object(self.module, "resolve_cdp_endpoint", return_value="endpoint"),
+            mock.patch.object(self.module.subprocess, "Popen") as launch,
+        ):
+            result = self.module.open_browser_context(
+                playwright, "managed_cdp", "local", mock.Mock(), for_login_check=True
+            )
+        self.assertEqual(result, (browser, self.context, False))
+        stop.assert_not_called()
+        launch.assert_not_called()
+
+    def test_unresponsive_login_browser_is_reported_without_closing_window(self):
+        with (
+            mock.patch.object(self.module, "try_resolve_cdp_endpoint", return_value=None),
+            mock.patch.object(self.module, "managed_chrome_pid", return_value=123),
+            mock.patch.object(self.module, "managed_chrome_launch_version", return_value=0),
+            mock.patch.object(self.module, "managed_chrome_is_headless", return_value=False),
+            mock.patch.object(self.module, "stop_managed_chrome") as stop,
+            mock.patch.object(self.module, "find_windows_browser", return_value=None),
+            mock.patch.object(self.module, "find_macos_chrome", return_value=None),
+            mock.patch.object(self.module.time_module, "monotonic", side_effect=[0, 4]),
+            mock.patch.object(self.module.subprocess, "Popen") as launch,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "保留登录窗口"):
+                self.module.open_browser_context(
+                    mock.Mock(), "managed_cdp", "local", mock.Mock(), for_login_check=True
+                )
+        stop.assert_not_called()
+        launch.assert_not_called()
+
 
 class WpsLoginStatusUiTests(unittest.TestCase):
     def setUp(self):

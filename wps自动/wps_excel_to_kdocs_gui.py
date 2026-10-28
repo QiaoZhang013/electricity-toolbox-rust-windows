@@ -1125,8 +1125,13 @@ def _ensure_wps_dedicated_chrome(
     initial_url: str = "https://www.kdocs.cn/",
     preload_url: bool = False,
     headless: bool = False,
+    *,
+    preserve_running: bool = False,
 ) -> dict[str, Any]:
-    stop_outdated_managed_chrome(log, cdp_url, headless=headless)
+    # A status probe must never migrate settings or switch a login window to
+    # headless mode, even when its CDP endpoint temporarily stops responding.
+    if not preserve_running:
+        stop_outdated_managed_chrome(log, cdp_url, headless=headless)
     existing_endpoint = try_resolve_cdp_endpoint(cdp_url)
     if existing_endpoint:
         ensure_wps_cdp_page(
@@ -1162,6 +1167,8 @@ def _ensure_wps_dedicated_chrome(
                     "headless": headless,
                 }
             time_module.sleep(0.2)
+        if preserve_running:
+            raise RuntimeError("专用浏览器暂未响应，已保留登录窗口；请完成登录后刷新状态。")
         stop_managed_chrome(
             existing_pid,
             log,
@@ -1234,6 +1241,8 @@ def ensure_wps_dedicated_chrome(
     initial_url: str = "https://www.kdocs.cn/",
     preload_url: bool = False,
     headless: bool = False,
+    *,
+    preserve_running: bool = False,
 ) -> dict[str, Any]:
     with WPS_CHROME_START_LOCK:
         return _ensure_wps_dedicated_chrome(
@@ -1243,6 +1252,7 @@ def ensure_wps_dedicated_chrome(
             initial_url,
             preload_url,
             headless,
+            preserve_running=preserve_running,
         )
 
 
@@ -1262,6 +1272,10 @@ def open_browser_context(
             if for_login_check and try_resolve_cdp_endpoint(cdp_url):
                 # Do not close the visible browser while the user is logging in.
                 ensure_wps_cdp_page(cdp_url)
+            elif for_login_check:
+                ensure_wps_dedicated_chrome(
+                    cdp_url, log, headless=True, preserve_running=True
+                )
             else:
                 ensure_wps_dedicated_chrome(cdp_url, log, headless=True)
         else:
