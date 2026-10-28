@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -21,17 +22,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 try:
-    from openpyxl import load_workbook
-    from openpyxl.utils import get_column_letter, range_boundaries
-    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
-except ImportError:  # pragma: no cover - surfaced in GUI
-    load_workbook = None
-    get_column_letter = None
-    range_boundaries = None
-    coordinate_from_string = None
-    column_index_from_string = None
-
-try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 except ImportError:  # pragma: no cover - surfaced in GUI
@@ -44,7 +34,7 @@ if str(BASE_DIR.parent) not in sys.path:
     sys.path.insert(0, str(BASE_DIR.parent))
 from toolbox_storage import data_path
 from toolbox_platform import process_is_alive, hidden_process_options, windows_browser_processes, find_windows_browser
-from toolbox_wps_config import (_document_config_from_dict, _region_config_from_dict, _string_list, build_config_export, load_config_export, normalize_runtime_config, runtime_config_from_export_payload, save_config_export)
+from toolbox_wps_config import (_document_config_from_dict, _region_config_from_dict, _string_list, build_config_export, load_config_export, normalize_document_titles, normalize_runtime_config, runtime_config_from_export_payload, save_config_export)
 from toolbox_log_console import LogConsole, explain_error, redact
 from toolbox_choices import SegmentedGroup
 from toolbox_wps_urls import url_choices
@@ -209,10 +199,25 @@ def values_equivalent(expected: Any, actual: Any) -> bool:
 
 
 def parse_start_cell(cell: str) -> tuple[int, int]:
-    if coordinate_from_string is None or column_index_from_string is None:
-        raise RuntimeError("缺少表格读取组件，请运行工具箱目录中的 setup_macos.command 完成初始化。")
-    col_text, row = coordinate_from_string(cell.strip().upper())
-    return row, column_index_from_string(col_text)
+    # Form validation and saved-region summaries must not initialize NumPy via
+    # openpyxl. Keep the same A..ZZZ, absolute-reference and positive-row rules.
+    match = re.fullmatch(r"\$?([A-Z]{1,3})\$?(\d+)", cell.strip().upper())
+    if match is None or int(match[2]) == 0:
+        raise ValueError(f"无效的单元格地址：{cell}")
+    column = 0
+    for letter in match[1]:
+        column = column * 26 + ord(letter) - ord('A') + 1
+    return int(match[2]), column
+
+
+def get_column_letter(column: int) -> str:
+    if not 1 <= column <= 18278:
+        raise ValueError(f"无效的列编号：{column}")
+    letters = []
+    while column:
+        column, remainder = divmod(column - 1, 26)
+        letters.append(chr(ord('A') + remainder))
+    return ''.join(reversed(letters))
 
 
 def normalize_cell_address(cell: str) -> str:
@@ -317,6 +322,12 @@ def update_recent_urls(urls: list[str], url: str) -> list[str]:
 
 def load_excel_workbook(workbook_path: Path, **kwargs):
     """Open an OOXML workbook with a useful error for partial/corrupt files."""
+    # Desktop reads run in the existing business worker. Loading the WPS form
+    # itself must not load Excel's optional native numerical dependencies.
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise RuntimeError("缺少表格读取组件，请运行工具箱初始化程序。") from exc
     if workbook_path.suffix.lower() in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
         try:
             is_zip = zipfile.is_zipfile(workbook_path)
@@ -356,8 +367,6 @@ def read_excel_ranges(
     workbook_path: Path, requests: list[tuple[str, str]]
 ) -> list[tuple[list[list[Any]], int, int]]:
     """Read several regions of a workbook with one scan per source sheet."""
-    if load_workbook is None or range_boundaries is None:
-        raise RuntimeError("缺少表格读取组件，请运行工具箱目录中的 setup_macos.command 完成初始化。")
     if not workbook_path.exists():
         raise FileNotFoundError(f"找不到表格文件：{workbook_path}")
     if not requests:
@@ -365,6 +374,7 @@ def read_excel_ranges(
 
     wb = load_excel_workbook(workbook_path, data_only=True, read_only=True)
     try:
+        from openpyxl.utils import range_boundaries
         grouped: dict[str, list[tuple[int, tuple[int, int, int, int]]]] = {}
         for index, (sheet_name, source_range) in enumerate(requests):
             if sheet_name not in wb.sheetnames:
@@ -406,8 +416,6 @@ def read_excel_ranges(
 
 
 def read_excel_sheet_names(workbook_path: Path) -> list[str]:
-    if load_workbook is None:
-        raise RuntimeError("缺少表格读取组件，请运行工具箱目录中的 setup_macos.command 完成初始化。")
     if not workbook_path.exists():
         raise FileNotFoundError(f"找不到表格文件：{workbook_path}")
     wb = load_excel_workbook(workbook_path, read_only=True)
@@ -2933,7 +2941,7 @@ class WpsWriterFrame(ttk.Frame):
 
     def load_initial_config(self) -> None:
         config = load_config()
-        self.document_titles = normalize_runtime_config(config).get("document_titles", {})
+        self.document_titles = normalize_document_titles(config.get("document_titles"))
         self.recent_urls = [url for url in config.get("recent_urls", []) if isinstance(url, str) and url.strip()]
         if config.get("kdocs_url"):
             self.recent_urls = update_recent_urls(self.recent_urls, config["kdocs_url"])

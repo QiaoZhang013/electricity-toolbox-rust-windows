@@ -7,6 +7,13 @@ from typing import Any
 CONFIG_EXPORT_SCHEMA = "wps_excel_to_kdocs_config_export"
 CONFIG_EXPORT_VERSION = 1
 
+
+def normalize_document_titles(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {url.strip(): title.strip() for url, title in value.items()
+            if isinstance(url, str) and url.strip() and isinstance(title, str) and title.strip()}
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -55,12 +62,9 @@ def normalize_runtime_config(data: dict[str, Any]) -> dict[str, Any]:
             if isinstance(row, dict)
         ],
     }
-    titles = data.get("document_titles")
-    if isinstance(titles, dict):
-        titles = {url.strip(): title.strip() for url, title in titles.items()
-                  if isinstance(url, str) and url.strip() and isinstance(title, str) and title.strip()}
-        if titles:
-            config["document_titles"] = titles
+    titles = normalize_document_titles(data.get("document_titles"))
+    if titles:
+        config["document_titles"] = titles
     return config
 
 
