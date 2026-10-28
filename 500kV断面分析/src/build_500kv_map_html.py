@@ -1640,7 +1640,7 @@ def _render_html(data: dict[str, object]) -> str:
         if (event.key === 'Enter' || event.key === ' ') activate(event);
       }});
       flowArrowsG.appendChild(group);
-      flowArrowItems.set(edge.edge, {{ group, title, hit, line, route, packets, speed:.065 * (edge.is_section ? .4 : .8), bounds:[Math.min(edge.x1,edge.x2),Math.min(edge.y1,edge.y2),Math.max(edge.x1,edge.x2),Math.max(edge.y1,edge.y2)] }});
+      flowArrowItems.set(edge.edge, {{ group, title, hit, line, route, packets, speed:.0325 * (edge.is_section ? .4 : .8), bounds:[Math.min(edge.x1,edge.x2),Math.min(edge.y1,edge.y2),Math.max(edge.x1,edge.x2),Math.max(edge.y1,edge.y2)] }});
       resetFlowArrow(edge);
     }});
 
