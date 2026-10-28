@@ -31,6 +31,15 @@ class Response(io.BytesIO):
     def geturl(self):return self.url
 
 class WindowsChannelTests(unittest.TestCase):
+    def test_retired_account_release_is_not_accepted_by_migration_channel(self):
+        data=metadata('0.1.25')
+        retired='Qiaozhang13/electricity-toolbox-rust-windows'
+        data['html_url']=f'https://github.com/{retired}/releases/tag/v0.1.25'
+        name=data['assets'][0]['name']
+        data['assets'][0]['browser_download_url']=f'https://github.com/{retired}/releases/download/v0.1.25/{name}'
+        with self.assertRaises(UpdateError):
+            parse_windows_release(data,'0.1.24')
+
     def test_channel_accepts_only_exact_windows_asset_from_our_repository(self):
         release=parse_windows_release(metadata(),'0.1.21')
         self.assertEqual(release.asset['name'],'ElectricityToolbox_0.1.22_windows_x64_setup.exe')

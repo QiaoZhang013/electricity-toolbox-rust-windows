@@ -14,7 +14,7 @@ permissions:
   contents: write
 jobs:
   release:
-    uses: Qiaozhang13/electricity-toolbox-rust-windows/.github/workflows/desktop-release.yml@development
+    uses: QiaoZhang013/electricity-toolbox-rust-windows/.github/workflows/desktop-release.yml@development
     with:
       tag: ${{ inputs.tag }}
       full_only: ${{ inputs.full_only }}

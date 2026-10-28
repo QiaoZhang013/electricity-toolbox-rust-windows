@@ -10,6 +10,6 @@ permissions:
   contents: read
 jobs:
   windows:
-    uses: Qiaozhang13/electricity-toolbox-rust-windows/.github/workflows/windows-desktop.yml@development
+    uses: QiaoZhang013/electricity-toolbox-rust-windows/.github/workflows/windows-desktop.yml@development
     with:
       installer: ${{ inputs.installer }}

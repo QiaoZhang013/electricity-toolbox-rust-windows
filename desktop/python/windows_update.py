@@ -15,7 +15,7 @@ import uuid
 
 from github_update import GitHubUpdater, Release, UpdateError, version_parts
 
-WINDOWS_REPOSITORY = "Qiaozhang13/electricity-toolbox-rust-windows"
+WINDOWS_REPOSITORY = "QiaoZhang013/electricity-toolbox-rust-windows"
 
 
 def installer_name(tag):
