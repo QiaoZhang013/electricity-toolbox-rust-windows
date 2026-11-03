@@ -97,7 +97,8 @@ fn run_worker(config: Config, shared: Shared, id: String, prepared: Value, reque
             .arg("--workspace").arg(&config.workspace).arg("--request").arg(&request_path)
             .current_dir(&config.workspace).env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8")
             .env("TOOLBOX_PYTHON", &config.python).env("PYTHONDONTWRITEBYTECODE", "1");
-        owned_child = Some(service_process::OwnedChild::spawn_if_active(&mut command, &cancelled).map_err(|e| e.to_string())?);
+        owned_child = Some(service_process::OwnedChild::spawn_if_active(&mut command, &cancelled,
+            request["tool_id"] == "wps-writer").map_err(|e| e.to_string())?);
         let owned = owned_child.as_mut().unwrap();
         let (sender, receiver) = mpsc::sync_channel::<Option<String>>(128);
         let stdout = owned.child.stdout.take().unwrap();

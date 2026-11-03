@@ -65,14 +65,14 @@ class RustServiceTests(unittest.TestCase):
         params.update(changes)
         return self.call("start", params)
 
-    def finish(self, task_id):
-        deadline = time.monotonic() + 15
+    def finish(self, task_id, timeout=15):
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             task = next(task for task in self.call("tasks") if task["id"] == task_id)
             if task["state"] not in {"created", "running", "cancelling"}:
                 return task
             time.sleep(.02)
-        self.fail("Task did not finish")
+        self.fail(f"Task did not finish: {task}; events={self.call('events')}")
 
     def test_protocol_and_streamed_worker_results_are_native(self):
         self.assertEqual(self.call("ping")["engine"], "rust")
@@ -144,6 +144,81 @@ class RustServiceTests(unittest.TestCase):
         self.assertEqual(self.finish(task_id)["state"], "succeeded")
         line = next(row["message"] for row in self.call("events")["events"] if row["message"].startswith("descendant:"))
         self.assertFalse(process_is_alive(int(line.strip().split(":")[1])))
+
+    @unittest.skipUnless(os.name == "nt", "Windows managed browser lifetime")
+    def test_wps_login_window_survives_completed_workers_and_status_checks(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import socket
+        import threading
+        from toolbox_platform import find_windows_browser
+        browser = find_windows_browser()
+        if browser is None:
+            self.skipTest("Chrome/Edge or Playwright Chromium is required")
+
+        class LoginFixture(BaseHTTPRequestHandler):
+            def do_GET(self):
+                content = (b'{"result":"userNotLogin"}' if self.path == '/status'
+                           else b'<html><title>WPS login lifetime fixture</title>Please log in</html>')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json' if self.path == '/status' else 'text/html')
+                self.end_headers()
+                self.wfile.write(content)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), LoginFixture)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        with socket.socket() as reserved:
+            reserved.bind(('127.0.0.1', 0))
+            cdp = f'http://127.0.0.1:{reserved.getsockname()[1]}'
+        base = f'http://127.0.0.1:{server.server_port}'
+        target = self.workspace / 'wps自动/wps_excel_to_kdocs_gui.py'
+        target.parent.mkdir()
+        # Keep the real browser, workflow, worker and Windows job cleanup. Only
+        # the remote login endpoint and executable discovery use local fixtures.
+        source = (ROOT / 'wps自动/wps_excel_to_kdocs_gui.py').read_text(encoding='utf-8')
+        source += f'\nWPS_LOGIN_STATUS_URL = {base + "/status"!r}\nfind_windows_browser = lambda: Path({str(browser)!r})\n'
+        target.write_text(source, encoding='utf-8')
+        config = json.dumps(dict(browser_mode='managed_cdp', cdp_url=cdp))
+        values = dict(config=config, operation=json.dumps(dict(initial_url=base + '/login')))
+        pid = None
+        try:
+            task = self.finish(self.start(tool_id='wps-writer', action='login', values=values), timeout=60)
+            self.assertEqual(task['state'], 'succeeded', task)
+            self.assertEqual(task['result']['state'], 'logged_out', task)
+            pid = int((target.parent / 'wps-chrome.pid').read_text())
+            self.assertTrue(process_is_alive(pid), 'WPS login browser was killed when its worker completed')
+            for index in range(2):
+                task = self.finish(self.start(tool_id='wps-writer', action='status',
+                    values=dict(config=config), request_id=f'wps-status-{index}'), timeout=60)
+                self.assertEqual(task['state'], 'succeeded', task)
+                self.assertEqual(task['result']['state'], 'logged_out', task)
+                self.assertEqual(pid, int((target.parent / 'wps-chrome.pid').read_text()))
+                self.assertTrue(process_is_alive(pid), 'Status check closed the login window')
+            self.call('shutdown', {'cancel': True})
+            self.process.wait(timeout=8)
+            self.assertTrue(process_is_alive(pid), 'Service exit closed the dedicated login browser')
+        finally:
+            if pid is None and (target.parent / 'wps-chrome.pid').exists():
+                pid = int((target.parent / 'wps-chrome.pid').read_text())
+            if pid and process_is_alive(pid):
+                from playwright.sync_api import sync_playwright
+                try:
+                    with sync_playwright() as playwright:
+                        connection = playwright.chromium.connect_over_cdp(cdp, timeout=5000)
+                        connection.new_browser_cdp_session().send('Browser.close')
+                finally:
+                    deadline = time.monotonic() + 5
+                    while process_is_alive(pid) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    if process_is_alive(pid):
+                        subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'],
+                            capture_output=True, **hidden_process_options())
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_host_disconnect_waits_for_noninterruptible_write(self):
         marker = self.workspace / "completed.txt"

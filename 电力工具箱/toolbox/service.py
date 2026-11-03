@@ -104,7 +104,8 @@ class ToolboxService:
                     ProcessRunner().run([python_executable(), "-u", "-B",
                         str(Path(__file__).resolve().parents[2] / "desktop/python/task_worker.py"), "--workspace", str(self.paths.workspace),
                         "--request", str(request_path)], cwd=self.paths.workspace,
-                        env=utf8_environment(), token=token, on_output=output)
+                        env=utf8_environment(), token=token, on_output=output,
+                        allow_browser_breakaway=tool_id == "wps-writer")
                     if result is None:
                         raise RuntimeError("业务进程未返回完成结果，请核对日志")
                     if no_data:

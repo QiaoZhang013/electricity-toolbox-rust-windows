@@ -47,6 +47,7 @@ class ProcessRunner:
         env: Mapping[str, str] | None,
         token: CancellationToken,
         on_output: Callable[[str], None],
+        allow_browser_breakaway: bool = False,
     ) -> ProcessResult:
         token.raise_if_cancelled()
         lines: Queue[str | None] = Queue()
@@ -66,7 +67,8 @@ class ProcessRunner:
         # while the leader exists, so cancellation can also reap orphaned children.
         if os.name == "nt":
             try:
-                process._toolbox_job = ProcessJob(process)
+                process._toolbox_job = (ProcessJob(process, allow_browser_breakaway=True)
+                    if allow_browser_breakaway else ProcessJob(process))
                 process._toolbox_job.resume(process.pid)
             except BaseException:
                 process.kill()

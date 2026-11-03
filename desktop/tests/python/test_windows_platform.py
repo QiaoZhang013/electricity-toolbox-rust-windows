@@ -150,6 +150,44 @@ if h:
             capture_output=True, text=True, encoding='utf-8', timeout=12)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_persistent_browser_outlives_python_worker_but_other_children_are_reaped(self):
+        from toolbox.tasks import ProcessRunner, CancellationToken, TaskCancelled
+        from toolbox_platform import process_is_alive, hidden_process_options
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                token = CancellationToken()
+                pids = []
+                code = '''
+import json, subprocess, sys, time
+from toolbox_platform import detached_browser_process_options
+stdio = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+ordinary = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'], **stdio)
+browser = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'], **stdio, **detached_browser_process_options())
+print(json.dumps([ordinary.pid, browser.pid]), flush=True)
+'''
+                if cancel:
+                    code += '\ntime.sleep(60)\n'
+                def output(line):
+                    import json
+                    pids.extend(json.loads(line))
+                    if cancel:
+                        token.cancel()
+                try:
+                    try:
+                        ProcessRunner().run([sys.executable, '-u', '-c', code], cwd=ROOT,
+                            env=None, token=token, on_output=output, allow_browser_breakaway=True)
+                    except TaskCancelled:
+                        self.assertTrue(cancel)
+                    else:
+                        self.assertFalse(cancel)
+                    self.assertEqual(len(pids), 2)
+                    self.assertFalse(process_is_alive(pids[0]), 'Ordinary worker descendant survived cleanup')
+                    self.assertTrue(process_is_alive(pids[1]), 'Dedicated browser was closed by worker cleanup')
+                finally:
+                    if len(pids) == 2 and process_is_alive(pids[1]):
+                        subprocess.run(['taskkill', '/PID', str(pids[1]), '/T', '/F'],
+                            capture_output=True, **hidden_process_options())
+
 
 if __name__ == '__main__':
     unittest.main()

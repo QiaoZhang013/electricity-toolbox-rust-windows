@@ -55,13 +55,16 @@ kernel.Thread32Next.argtypes = [w.HANDLE, ctypes.POINTER(ThreadEntry)]
 
 
 class ProcessJob:
-    def __init__(self, process):
+    def __init__(self, process, *, allow_browser_breakaway=False):
         self.handle = kernel.CreateJobObjectW(None, None)
         if not self.handle:
             raise ctypes.WinError(ctypes.get_last_error())
         try:
             limits = ExtendedLimits()
             limits.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+            if allow_browser_breakaway:
+                # Only explicitly detached WPS browser launches leave this job.
+                limits.BasicLimitInformation.LimitFlags |= 0x0800  # BREAKAWAY_OK
             if not kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
                 raise ctypes.WinError(ctypes.get_last_error())
             if not kernel.AssignProcessToJobObject(self.handle, int(process._handle)):

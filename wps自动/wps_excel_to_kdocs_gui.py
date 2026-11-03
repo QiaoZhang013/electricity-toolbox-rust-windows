@@ -33,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR.parent) not in sys.path:
     sys.path.insert(0, str(BASE_DIR.parent))
 from toolbox_storage import data_path
-from toolbox_platform import process_is_alive, hidden_process_options, windows_browser_processes, find_windows_browser
+from toolbox_platform import process_is_alive, hidden_process_options, detached_browser_process_options, windows_browser_processes, find_windows_browser
 from toolbox_wps_config import (_document_config_from_dict, _region_config_from_dict, _string_list, build_config_export, load_config_export, normalize_document_titles, normalize_runtime_config, runtime_config_from_export_payload, save_config_export)
 from toolbox_log_console import LogConsole, explain_error, redact
 from toolbox_choices import SegmentedGroup
@@ -1198,8 +1198,7 @@ def _ensure_wps_dedicated_chrome(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=os.name != "nt",
-        **hidden_process_options(),
+        **detached_browser_process_options(),
     )
     remember_managed_chrome(
         process.pid,

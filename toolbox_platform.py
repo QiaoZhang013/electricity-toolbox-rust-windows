@@ -14,6 +14,13 @@ def hidden_process_options():
     return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
+def detached_browser_process_options():
+    """Keep the persistent WPS browser outside a short-lived worker's job."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_BREAKAWAY_FROM_JOB}
+    return {"start_new_session": True}
+
+
 def configure_dpi():
     """Ask Windows for physical display metrics before constructing Tk windows."""
     if os.name == "nt":

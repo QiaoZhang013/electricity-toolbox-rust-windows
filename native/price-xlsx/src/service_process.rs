@@ -10,7 +10,7 @@ pub struct OwnedChild {
 }
 
 impl OwnedChild {
-    pub fn spawn_if_active(command: &mut Command, cancelled: &AtomicBool) -> io::Result<Self> {
+    pub fn spawn_if_active(command: &mut Command, cancelled: &AtomicBool, allow_browser_breakaway: bool) -> io::Result<Self> {
         if cancelled.load(Ordering::Acquire) { return Err(io::Error::new(io::ErrorKind::Interrupted, "任务已取消")); }
         command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)]
@@ -18,13 +18,14 @@ impl OwnedChild {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000 | 0x00000004);
             let mut child = command.spawn()?;
-            match windows::Job::assign_and_resume(&child, cancelled) {
+            match windows::Job::assign_and_resume(&child, cancelled, allow_browser_breakaway) {
                 Ok(job) => Ok(Self { child, job }),
                 Err(error) => { let _ = child.kill(); let _ = child.wait(); Err(error) }
             }
         }
         #[cfg(unix)]
         {
+            let _ = allow_browser_breakaway;
             use std::os::unix::process::CommandExt;
             command.process_group(0);
             Ok(Self { child: command.spawn()? })
@@ -126,13 +127,17 @@ mod windows {
 
     pub struct Job(usize, std::sync::Mutex<Vec<usize>>);
     impl Job {
-        pub fn assign_and_resume(child: &Child, cancelled: &AtomicBool) -> io::Result<Self> {
+        pub fn assign_and_resume(child: &Child, cancelled: &AtomicBool, allow_browser_breakaway: bool) -> io::Result<Self> {
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() { return Err(io::Error::last_os_error()); }
                 let job = Self(handle as usize, std::sync::Mutex::new(Vec::new()));
                 let mut limits = ExtendedLimits::default();
                 limits.basic.flags = 0x2000;
+                // WPS owns its persistent browser via a dedicated profile/PID.
+                // Ordinary descendants still inherit this kill-on-close job;
+                // only an explicit CREATE_BREAKAWAY_FROM_JOB launch escapes.
+                if allow_browser_breakaway { limits.basic.flags |= 0x0800; }
                 if SetInformationJobObject(handle, 9, &limits as *const _ as _, std::mem::size_of_val(&limits) as u32) == 0
                     || AssignProcessToJobObject(handle, child.as_raw_handle()) == 0 {
                     return Err(io::Error::last_os_error());
@@ -250,7 +255,7 @@ mod tests {
     fn cancelled_before_launch_does_not_start_any_program() {
         let cancelled = AtomicBool::new(true);
         let mut command = Command::new("this-program-must-never-start");
-        match OwnedChild::spawn_if_active(&mut command, &cancelled) {
+        match OwnedChild::spawn_if_active(&mut command, &cancelled, false) {
             Err(error) => assert_eq!(error.kind(), io::ErrorKind::Interrupted),
             Ok(_) => panic!("cancelled task started a process"),
         }
