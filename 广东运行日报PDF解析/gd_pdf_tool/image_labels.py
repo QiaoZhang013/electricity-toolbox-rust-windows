@@ -6,14 +6,14 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from toolbox_platform import hidden_process_options
+from toolbox_platform import hidden_process_options, windows_powershell_executable, windows_system_environment
 
 
 def recognize_image_labels(image_path: Path) -> list[dict]:
     """Use local OS OCR; preserve Vision's normalized bottom-left box protocol."""
     if sys.platform == "win32":
         helper = Path(__file__).with_name("recognize_image_labels.ps1")
-        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        command = [str(windows_powershell_executable()), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                    "-File", str(helper), str(image_path.resolve())]
     else:
         helper = Path(__file__).with_name("recognize_image_labels.js")
@@ -21,7 +21,8 @@ def recognize_image_labels(image_path: Path) -> list[dict]:
     try:
         result = subprocess.run(
             command, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            check=True, timeout=90, **hidden_process_options(),
+            check=True, timeout=90, env=windows_system_environment() if sys.platform == 'win32' else None,
+            **hidden_process_options(),
         )
         return json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:

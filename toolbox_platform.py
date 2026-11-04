@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import os
 import json
 import hashlib
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -59,15 +60,55 @@ def process_is_alive(pid: int) -> bool:
         kernel.CloseHandle(handle)
 
 
+def _windows_system_directory() -> Path | None:
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetSystemDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+        kernel.GetSystemDirectoryW.restype = wintypes.UINT
+        buffer = ctypes.create_unicode_buffer(32768)
+        count = kernel.GetSystemDirectoryW(buffer, len(buffer))
+        if 0 < count < len(buffer):
+            return Path(buffer.value)
+    for variable in ('SystemRoot', 'WINDIR'):
+        if root := os.environ.get(variable):
+            return Path(root) / 'System32'
+    return None
+
+
+def windows_powershell_executable() -> Path:
+    """Find the Windows component even when a desktop launch has no shell PATH."""
+    system = _windows_system_directory()
+    if system is not None:
+        candidate = system / 'WindowsPowerShell/v1.0/powershell.exe'
+        if candidate.is_file():
+            return candidate
+    if discovered := shutil.which('powershell.exe'):
+        return Path(discovered).resolve()
+    raise RuntimeError('未找到 Windows PowerShell，无法执行系统检查；请检查 Windows 系统组件是否完整。')
+
+
+def windows_system_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    if system := _windows_system_directory():
+        # PowerShell itself needs these for startup. Repair only its environment;
+        # do not change the user's PATH or machine settings.
+        for variable in ('SYSTEMROOT', 'WINDIR'):
+            if not environment.get(variable):
+                environment[variable] = str(system.parent)
+    return environment
+
+
 def windows_browser_processes(pid: int | None = None) -> list[dict]:
     """Query command lines only when starting/reconnecting the dedicated browser."""
     condition = f"ProcessId={int(pid)}" if pid is not None else "Name='chrome.exe' OR Name='msedge.exe'"
     script = ("[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "
               f"@(Get-CimInstance Win32_Process -Filter \"{condition}\" | "
               "Select-Object ProcessId,CommandLine) | ConvertTo-Json -Compress")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+    result = subprocess.run([str(windows_powershell_executable()), "-NoProfile", "-NonInteractive", "-Command", script],
                             capture_output=True, text=True, encoding="utf-8", timeout=10,
-                            check=True, **hidden_process_options())
+                            check=True, env=windows_system_environment(), **hidden_process_options())
     rows = json.loads(result.stdout.strip() or "[]")
     return [rows] if isinstance(rows, dict) else rows
 

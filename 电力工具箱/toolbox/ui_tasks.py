@@ -64,6 +64,7 @@ class RemoteTaskRegistry(TaskRegistry):
         self.client = client
         self._request_ids = {}
         self._request_lock = threading.Lock()
+        self._wps_operation_lock = threading.Lock()
 
     def execute_remote(self, tool_id, action, values, token, log):
         # Original page dialogs already confirm operations requiring confirmation.
@@ -188,7 +189,15 @@ class RemoteTaskRegistry(TaskRegistry):
         from .tasks import CancellationToken
         values = dict(config=json.dumps(config, ensure_ascii=False),
                       selected_indexes=",".join(str(i + 1) for i in indexes) or "1", operation=json.dumps(operation or {}))
-        return self.execute_remote("wps-writer", action, values, CancellationToken(), log)
+        # Login checks, document reads and writes share the dedicated browser.
+        # Queue them before submission; the service's exclusion remains intact.
+        if not self._wps_operation_lock.acquire(blocking=False):
+            log("正在等待其他 WPS 操作完成…")
+            self._wps_operation_lock.acquire()
+        try:
+            return self.execute_remote("wps-writer", action, values, CancellationToken(), log)
+        finally:
+            self._wps_operation_lock.release()
 
     def wps_read(self, method, arguments, log):
         return self.wps_action("inspect", {}, [], log, operation=dict(method=method, arguments=arguments))

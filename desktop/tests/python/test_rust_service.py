@@ -23,10 +23,13 @@ class RustServiceTests(unittest.TestCase):
         self.script = self.workspace / "上网电量抓取/export_online_energy.py"
         self.script.parent.mkdir()
         self.script.write_text('print("中文任务日志",flush=True)\n', encoding="utf-8")
+        environment = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+        if self._testMethodName == 'test_wps_login_browser_survives_with_empty_path':
+            environment['PATH'] = ''
         self.process = subprocess.Popen([str(SERVICE), "--workspace", str(self.workspace),
             "--code-root", str(ROOT), "--python", sys.executable], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+            env=environment,
             **hidden_process_options())
         self.sequence = 0
         self.assertEqual(json.loads(self.process.stdout.readline())["event"]["kind"], "service-ready")
@@ -219,6 +222,10 @@ class RustServiceTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows browser discovery without PATH')
+    def test_wps_login_browser_survives_with_empty_path(self):
+        self.test_wps_login_window_survives_completed_workers_and_status_checks()
 
     def test_host_disconnect_waits_for_noninterruptible_write(self):
         marker = self.workspace / "completed.txt"
