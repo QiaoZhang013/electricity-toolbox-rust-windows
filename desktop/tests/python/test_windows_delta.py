@@ -203,7 +203,7 @@ class PatchTests(unittest.TestCase):
         self.assertEqual(meta['before'], self.delta.inventory(self.old))
         self.assertEqual(meta['after'], self.delta.inventory(self.new))
         self.assertEqual(prepared.staging_dir.name, '.electricity-toolbox-stage-' + prepared.token)
-        self.assertEqual(prepared.staging_dir.parent, self.old.parent)
+        self.assertEqual(prepared.staging_dir.parent, self.old.parent.resolve())
         self.assertGreater(prepared.linked_bytes, 100000)
         with self.assertRaises(UpdateError):
             self.delta.cleanup_stage(self.new, self.old, prepared.token)
