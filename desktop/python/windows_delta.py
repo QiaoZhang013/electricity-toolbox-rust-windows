@@ -25,6 +25,17 @@ MAX_SIZE = 12 * 1024**3
 STAGE_PREFIX = '.electricity-toolbox-stage-'
 
 
+def _io_path(path):
+    """Use Win32 extended paths for I/O without changing public stage ownership."""
+    path = Path(path)
+    if os.name != 'nt':
+        return path
+    text = str(path.absolute())
+    if text.startswith('\\\\?\\'):
+        return path.absolute()
+    return Path('\\\\?\\UNC\\' + text[2:] if text.startswith('\\\\') else '\\\\?\\' + text)
+
+
 def _version(value):
     if not isinstance(value, str) or value.startswith('v'):
         raise UpdateError('Windows 补丁版本无效')
@@ -97,7 +108,7 @@ def validate_inventory(entries):
 
 
 def _plain(path):
-    info = path.lstat()
+    info = _io_path(path).lstat()
     if (stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400
             or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))):
         raise UpdateError('Windows 程序目录包含链接、重解析点或特殊文件')
@@ -114,7 +125,7 @@ def _walk(root):
 
 
 def inventory(root, cancel=None):
-    root, result = Path(root), {}
+    root, result = _io_path(root), {}
     _plain(root)
     for top in ('electricity-toolbox.exe', 'WebView2Loader.dll', 'uninstall.exe', 'payload'):
         path = root / top
@@ -137,12 +148,12 @@ def inventory(root, cancel=None):
 
 
 def install_version(root):
-    value = json.loads((Path(root) / 'payload/manifest.json').read_text(encoding='utf-8'))
+    value = json.loads((_io_path(root) / 'payload/manifest.json').read_text(encoding='utf-8'))
     return _version(value.get('version'))
 
 
 def create_patch(old, new, output):
-    old, new, output = Path(old), Path(new), Path(output)
+    old, new, output = _io_path(old), _io_path(new), Path(output)
     base, target = install_version(old), install_version(new)
     if version_parts(base) >= version_parts(target):
         raise UpdateError('Windows 补丁目标必须高于基准版本')
@@ -174,6 +185,7 @@ def clone_installation(source, destination, cancel=None, progress=None):
     source, destination = Path(source).resolve(), Path(destination)
     if destination.exists() or destination.resolve().is_relative_to(source):
         raise UpdateError('Windows 更新暂存目录已存在或位置无效')
+    source, destination = _io_path(source), _io_path(destination)
     entries = list(_walk(source))
     for path, _ in entries:
         windows_name(path.relative_to(source).as_posix())
@@ -213,7 +225,7 @@ def _metadata(raw, base, target):
 
 
 def apply_patch(stage, patch, expected_base, expected_target, cancel=None):
-    stage = Path(stage)
+    stage = _io_path(stage)
     cancelled(cancel)
     with tarfile.open(patch, 'r:xz') as archive:
         first = archive.next()
@@ -268,6 +280,7 @@ def cleanup_stage(stage, root, token):
     if (stage.parent.resolve() != root.parent.resolve() or stage.name != STAGE_PREFIX + token
             or not re.fullmatch('[a-f0-9-]{32,36}', token)):
         raise UpdateError('拒绝清理非本次 Windows 更新目录')
+    stage = _io_path(stage)
     if stage.exists():
         _plain(stage)
         # Validate links before a recursive operation, even on Python versions that

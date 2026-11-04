@@ -42,6 +42,33 @@ class RouteTests(unittest.TestCase):
 
 
 class PatchTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows extended-length path behavior')
+    def test_long_staging_paths_restore_with_links_and_copy_fallback(self):
+        padding = 240 - len(str(self.old / 'payload/runtime/library.bin')) - 1
+        self.assertGreater(padding, 0)
+        relative = Path('payload/runtime') / ('x' * padding) / 'library.bin'
+        changed = relative.with_name('changed.bin')
+        for root, version in ((self.old, b'old'), (self.new, b'new')):
+            (root / relative).parent.mkdir(parents=True)
+            (root / relative).write_bytes(b'shared long-path runtime')
+            (root / changed).write_bytes(version)
+        archive = self.patch()
+        before = self.delta.inventory(self.old)
+        for copy_only in (False, True):
+            with self.subTest(copy_only=copy_only):
+                with patch('windows_delta.os.link', side_effect=OSError('unsupported')) if copy_only else patch('windows_delta.os.link', wraps=os.link):
+                    prepared = self.delta.prepare_update(self.old,
+                        [(archive, '1.0.1', '1.0.2')], '1.0.2', self.root)
+                try:
+                    self.assertGreater(len(str(prepared.staging_dir / relative)), 260)
+                    self.assertEqual(self.delta.inventory(prepared.staging_dir), self.delta.inventory(self.new))
+                    self.assertEqual(self.delta.inventory(self.old), before)
+                    extended = Path('\\\\?\\' + str(prepared.staging_dir))
+                    self.assertEqual((extended / changed).read_bytes(), b'new')
+                    self.assertEqual(os.path.samefile(self.old / relative, extended / relative), not copy_only)
+                finally:
+                    self.delta.cleanup_stage(prepared.staging_dir, self.old, prepared.token)
+
     def test_copy_fallback_preserves_old_bytes_without_hardlink_support(self):
         archive=self.patch();stage=self.root/'copy-only'
         with patch('windows_delta.os.link',side_effect=OSError('not supported')):
