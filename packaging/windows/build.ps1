@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$PythonRoot, [string]$ForecastWorkbook)
+﻿param([Parameter(Mandatory=$true)][string]$PythonRoot, [string]$ForecastWorkbook, [switch]$FullOnly)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Set-Location -LiteralPath $root
@@ -26,8 +26,13 @@ $installers = @(Get-ChildItem -LiteralPath "$targetRoot/release/bundle/nsis" -Fi
 if ($installers.Count -ne 1) { throw 'NSIS build must produce exactly one installer for the current version.' }
 $installers | ForEach-Object {
     $destination = Join-Path $output $downloadName
+    if (Test-Path -LiteralPath $destination) { throw "Versioned installer already exists: $destination" }
     Copy-Item -LiteralPath $_.FullName -Destination $destination
     $digest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText("$destination.sha256", "$digest  $downloadName`n")
 }
 Write-Host "Windows installer and SHA256: $output"
+
+$deltaArguments = @('packaging/windows/build_updates.py', '--installer', (Join-Path $output $downloadName), '--output', $output)
+if ($FullOnly) { $deltaArguments += '--full-only' }
+Run-Native "$root/.venv/Scripts/python.exe" $deltaArguments

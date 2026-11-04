@@ -70,7 +70,7 @@
 - 使用 `.venv/bin/python packaging/tauri/version.py set X.Y.Z --notes "具体变更"` 同步版本和日志；多项变更重复传入 `--notes`。日期默认采用 Asia/Shanghai，历史记录必须保留。
 - `CHANGELOG.md` 是逐版本更新内容的唯一来源；`packaging/tauri/release_notes.md` 只维护通用安装说明。发布时由版本脚本提取当前版本内容并拼接安装说明，用于 GitHub Release 与应用内更新说明。
 - 发布前执行 `version.py check --tag vX.Y.Z --require-notes`，确认版本一致且更新内容非空；缺少对应日志时禁止打包发布。已发布版本不得覆盖，下一次发布递增版本号。
-- macOS 构建 Apple 芯片 DMG；Windows 构建 x64 NSIS 安装包及 SHA-256。完成针对性测试、安装包与摘要校验后才可发布正式版；生成物和签名私钥不进入 Git。Windows 0.1.22 起通过独立的 Windows 完整安装包自动更新，旧版本需手动引导升级一次；禁止使用 macOS DMG／增量更新通道。
+- macOS 构建 Apple 芯片 DMG；Windows 构建 x64 NSIS 安装包及 SHA-256。完成针对性测试、安装包与摘要校验后才可发布正式版；生成物和签名私钥不进入 Git。Windows 0.1.28 起优先使用独立的 Windows 文件增量补丁与 windows-update-manifest.json，缺少路径或验证失败回退完整 NSIS；0.1.27 及更早客户端需最后完整升级一次。禁止混用 macOS DMG／增量更新通道。
 
 - 桌面发行每个版本保留完整 DMG 和 `.dmg.sha256`，另发布 `update-manifest.json` 及适用的 `.patch.tar.xz` 增量补丁；不发布独立 `.app`、`.app.tar.gz`、`.sig` 或旧 `latest.json`，也不恢复 PKG。内部 `.app` 仅作构建与验证中间产物。
 - 日常维护优先增量更新，为最近三个正式版本生成直达补丁，保留历史补丁与索引中的升级路径；不得因只保留最新源码副本而删除旧版本发行附件。客户端选择总下载量最小且小于完整包的升级路径，逐步校验与还原；缺少路径、旧应用被改动或补丁失败时自动回退完整 DMG，用户取消不触发回退。

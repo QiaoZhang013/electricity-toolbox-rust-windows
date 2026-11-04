@@ -107,7 +107,7 @@ def prepare_forecast_seed(defaults: Path, workbook: Path | None = None) -> Path:
 def runtime_source(relative: Path) -> bool:
     if not build_support.exportable(relative):
         return False
-    if relative.as_posix() == 'desktop/python/windows_update.py':
+    if relative.as_posix() in {'desktop/python/windows_update.py', 'desktop/python/windows_delta.py'}:
         return True
     if relative.as_posix() in {"desktop/python/auto_install.py", "desktop/python/native_bridge.py", "desktop/python/service_bridge.py", "desktop/python/service_compat.py", "desktop/python/task_worker.py", "desktop/python/remote_updater.py", "desktop/python/github_update.py", "desktop/python/delta_update.py", "desktop/python/installer_image.py", "desktop/python/update_ui.py", "desktop/assets/app-icon-256.png"}:
         return True

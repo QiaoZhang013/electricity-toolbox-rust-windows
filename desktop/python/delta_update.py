@@ -239,7 +239,7 @@ def apply_patch(app, patch, installer, expected_base, expected_target, cancel=No
     verify_app(app, cancel)
 
 
-def select_route(index, current, target, full_size, repository):
+def select_route(index, current, target, full_size, repository, platform='apple-silicon'):
     """Smallest increasing-version route, always cheaper than the full installer."""
     if index.get('format') != FORMAT or index.get('version') != target:
         raise UpdateError('增量更新索引版本无效')
@@ -250,7 +250,7 @@ def select_route(index, current, target, full_size, repository):
     for edge in edges:
         try:
             base, end, size = edge['base'], edge['target'], edge['size']
-            name = f'ElectricityToolbox-{base}-to-{end}-apple-silicon.patch.tar.xz'
+            name = f'ElectricityToolbox-{base}-to-{end}-{platform}.patch.tar.xz'
             if (type(size) is not int or size <= 0 or edge['name'] != name
                     or not trusted_url(edge['browser_download_url'], repository)
                     or not edge['browser_download_url'].endswith('/' + name)

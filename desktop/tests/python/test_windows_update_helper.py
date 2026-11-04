@@ -4,11 +4,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 
 ROOT=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(ROOT/'desktop/python'))
 SERVICE=Path(os.environ.get('TOOLBOX_SERVICE_BINARY',ROOT/'电力工具箱/bin/toolbox-service.exe'))
 MAKENSIS=Path(os.environ.get('LOCALAPPDATA',''))/'tauri/NSIS/makensis.exe'
 
@@ -137,3 +139,100 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(self.status()['state'],'failed')
         self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
         self.assertTrue(all(p.poll() is None for p in self.processes))
+
+    def launch_delta(self, badapp=False, **changes):
+        import shutil
+        from windows_delta import create_patch, prepare_update
+        (self.target/'payload/runtime').mkdir()
+        (self.target/'payload/runtime/keep.bin').write_bytes(b'unchanged runtime bytes')
+        new=self.root/'new-release'
+        shutil.copytree(self.target,new)
+        (new/'payload/manifest.json').write_text('{"version":"9.0.1"}')
+        (new/'payload/added.txt').write_text('new program file')
+        if badapp:(new/'electricity-toolbox.exe').write_bytes(b'MZinvalid')
+        archive=self.cache/'patch.tar.xz'
+        create_patch(self.target,new,archive)
+        self.prepared=prepare_update(self.target,[(archive,'9.0.0','9.0.1')],'9.0.1',self.cache)
+        artifact=self.prepared.manifest
+        self.runtime_inode=(self.target/'payload/runtime/keep.bin').stat().st_ino
+        plan=dict(schema=2,installer=str(artifact),sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            size=artifact.stat().st_size,version='9.0.1',target_dir=str(self.target),app_home=str(self.home),
+            processes=self.children(),token=self.prepared.token,staging_dir=str(self.prepared.staging_dir),wait_timeout_ms=2000)
+        plan.update(changes)
+        (self.cache/'plan.json').write_text(json.dumps(plan),encoding='utf-8')
+        self.helper=subprocess.Popen([str(SERVICE),'--windows-update-helper',str(self.cache/'plan.json')],
+            stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+        deadline=time.monotonic()+5
+        while not self.status() and self.helper.poll() is None and time.monotonic()<deadline:time.sleep(.02)
+        self.assertEqual(self.status().get('state'),'ready',self.status())
+        return plan
+
+    def commit_delta(self):
+        (self.cache/'decision.json').write_text(json.dumps({'token':self.prepared.token,'action':'commit'}))
+        for child in self.processes:child.stdin.close()
+        self.helper.wait(timeout=20)
+
+    def test_real_delta_switches_verified_tree_and_reuses_runtime_files(self):
+        self.launch_delta()
+        self.commit_delta()
+        self.assertEqual(self.status()['state'],'succeeded',self.status())
+        self.assertEqual(self.status()['mode'],'delta')
+        self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.1')
+        self.assertEqual((self.target/'payload/runtime/keep.bin').stat().st_ino,self.runtime_inode)
+        self.assertEqual((self.home/'keep.txt').read_text(),'KEEP-DATA')
+        self.assertFalse(list(self.root.glob('.electricity-toolbox-rollback-*')))
+
+    def test_delta_stage_modified_after_ready_never_replaces_old_install(self):
+        self.launch_delta()
+        (self.prepared.staging_dir/'payload/added.txt').write_text('modified after ready')
+        self.commit_delta()
+        self.assertEqual(self.status()['state'],'failed',self.status())
+        self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
+        self.assertEqual((self.home/'keep.txt').read_text(),'KEEP-DATA')
+
+    def test_delta_modified_base_is_rejected_after_handoff(self):
+        self.launch_delta()
+        (self.target/'payload/runtime/keep.bin').write_bytes(b'modified baseline')
+        self.commit_delta()
+        self.assertEqual(self.status()['state'],'failed',self.status())
+        self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
+
+    def test_delta_unlaunchable_target_restores_original_program_and_data(self):
+        self.launch_delta(badapp=True)
+        self.commit_delta()
+        self.assertEqual(self.status()['state'],'failed',self.status())
+        self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
+        self.assertEqual((self.home/'keep.txt').read_text(),'KEEP-DATA')
+        self.assertTrue((self.target/'electricity-toolbox.exe').stat().st_size>100000)
+
+    def test_delta_abort_keeps_running_processes_and_old_tree(self):
+        self.launch_delta()
+        (self.cache/'decision.json').write_text(json.dumps({'token':self.prepared.token,'action':'abort'}))
+        self.helper.wait(timeout=8)
+        self.assertEqual(self.status()['state'],'aborted',self.status())
+        self.assertTrue(all(p.poll() is None for p in self.processes))
+        self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
+
+    def test_delta_rejects_added_or_atomically_replaced_unknown_local_files(self):
+        for replace in (False,True):
+            with self.subTest(replace=replace):
+                # Separate fixture lifecycle for each real helper transaction.
+                if replace:
+                    self.tearDown();self.setUp()
+                    (self.target/'notes.txt').write_text('older local notes')
+                self.launch_delta()
+                latest=self.target/'latest.tmp';latest.write_text('latest local notes')
+                latest.replace(self.target/'notes.txt')
+                self.commit_delta()
+                self.assertEqual(self.status()['state'],'failed',self.status())
+                self.assertEqual((self.target/'notes.txt').read_text(),'latest local notes')
+                self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
+
+    def test_full_update_preserves_unknown_local_files(self):
+        (self.target/'notes.txt').write_text('preserve local notes')
+        (self.target/'local').mkdir();(self.target/'local/history.txt').write_text('history')
+        self.launch();self.commit()
+        self.assertEqual(self.status()['state'],'succeeded',self.status())
+        self.assertTrue((self.target/'notes.txt').is_file(),'full fallback lost a local file')
+        self.assertEqual((self.target/'notes.txt').read_text(),'preserve local notes')
+        self.assertEqual((self.target/'local/history.txt').read_text(),'history')

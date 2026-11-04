@@ -31,6 +31,96 @@ class Response(io.BytesIO):
     def geturl(self):return self.url
 
 class WindowsChannelTests(unittest.TestCase):
+    def test_short_http_download_resumes_and_ignored_range_restarts_safely(self):
+        import http.server
+        import urllib.request
+        content=b'MZ'+bytes(range(256))*4096
+        for ignore_range in (False,True):
+            with self.subTest(ignore_range=ignore_range),tempfile.TemporaryDirectory() as folder:
+                requests=[]
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    def log_message(self,*args):pass
+                    def do_GET(self):
+                        requested=self.headers.get('Range');requests.append(requested)
+                        start=int(requested.split('=')[1].split('-')[0]) if requested and not ignore_range else 0
+                        self.send_response(206 if start else 200)
+                        self.send_header('Content-Length',str(len(content)-start))
+                        if start:self.send_header('Content-Range',f'bytes {start}-{len(content)-1}/{len(content)}')
+                        self.end_headers()
+                        if len(requests)==1:
+                            self.wfile.write(content[:300000]);self.wfile.flush();self.close_connection=True
+                        else:self.wfile.write(content[start:])
+                server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+                worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+                try:
+                    def opener(request,timeout):
+                        return urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{server.server_port}/file',headers=dict(request.header_items())),timeout=timeout)
+                    updater=WindowsUpdater('0.1.21',opener=opener);asset=metadata()['assets'][0]
+                    asset.update(size=len(content),digest='sha256:'+hashlib.sha256(content).hexdigest())
+                    result=updater.download_asset(asset,Path(folder)/'file.exe',threading.Event(),lambda _:None)
+                    self.assertEqual(result.read_bytes(),content)
+                    self.assertEqual(requests[0],None)
+                    self.assertTrue(requests[1].startswith('bytes='))
+                finally:server.shutdown();server.server_close();worker.join()
+
+    def delta_fixture(self, directory):
+        import windows_delta as delta
+        import shutil
+        old=Path(directory)/'installed';old.mkdir();(old/'payload').mkdir()
+        (old/'electricity-toolbox.exe').write_bytes(b'MZ old host')
+        (old/'payload/manifest.json').write_text('{"version":"0.1.21"}')
+        (old/'payload/runtime.bin').write_bytes(b'unchanged'*1000)
+        new=Path(directory)/'new';shutil.copytree(old,new)
+        (new/'payload/manifest.json').write_text('{"version":"0.1.22"}')
+        name=delta.patch_name('0.1.21','0.1.22')
+        edge=delta.create_patch(old,new,Path(directory)/name)
+        edge['browser_download_url']=f'https://github.com/{WINDOWS_REPOSITORY}/releases/download/v0.1.22/{name}'
+        index=json.dumps(dict(format=1,version='0.1.22',platform=delta.PLATFORM,patches=[edge])).encode()
+        data=metadata();data['assets'][0]['size']=1000000
+        data['assets'].append(dict(name=delta.INDEX_NAME,size=len(index),digest='sha256:'+hashlib.sha256(index).hexdigest(),
+            browser_download_url=f'https://github.com/{WINDOWS_REPOSITORY}/releases/download/v0.1.22/{delta.INDEX_NAME}'))
+        payloads={name:(Path(directory)/name).read_bytes(),delta.INDEX_NAME:index}
+        return old,data,payloads
+
+    def test_delta_download_prepares_small_update_and_preserves_live_tree(self):
+        from windows_delta import cleanup_stage
+        with tempfile.TemporaryDirectory() as folder:
+            old,data,payloads=self.delta_fixture(folder)
+            def opener(request,timeout):return Response(payloads[request.full_url.rsplit('/',1)[-1]])
+            updater=WindowsUpdater('0.1.21',opener=opener)
+            with patch.dict(os.environ,{'TOOLBOX_INSTALL_ROOT':str(old)}):
+                path=updater.download(parse_windows_release(data,'0.1.21'),threading.Event(),lambda _:None)
+            self.addCleanup(lambda:__import__('shutil').rmtree(path.parent,ignore_errors=True))
+            self.addCleanup(cleanup_stage,updater._prepared.staging_dir,old,updater._prepared.token)
+            self.assertEqual(path.name,'delta-plan.json')
+            self.assertEqual(updater.update_mode,'delta')
+            self.assertLess(updater.download_bytes,100000)
+            self.assertEqual(json.loads((old/'payload/manifest.json').read_text())['version'],'0.1.21')
+            self.assertEqual(json.loads((updater._prepared.staging_dir/'payload/manifest.json').read_text())['version'],'0.1.22')
+
+    def test_corrupt_delta_falls_back_to_full_but_cancel_never_does(self):
+        with tempfile.TemporaryDirectory() as folder:
+            old,data,payloads=self.delta_fixture(folder)
+            data['assets'][0].update(size=len(PAYLOAD))
+            # Keep the delta smaller than the full test artifact through a mocked route.
+            release=parse_windows_release(data,'0.1.21');calls=[]
+            def opener(request,timeout):
+                name=request.full_url.rsplit('/',1)[-1];calls.append(name)
+                return Response(PAYLOAD if name.endswith('.exe') else b'corrupt')
+            updater=WindowsUpdater('0.1.21',opener=opener)
+            with patch.dict(os.environ,{'TOOLBOX_INSTALL_ROOT':str(old)}):
+                path=updater.download(release,threading.Event(),lambda _:None)
+                self.addCleanup(lambda:__import__('shutil').rmtree(path.parent,ignore_errors=True))
+                self.assertEqual(path.read_bytes(),PAYLOAD)
+                self.assertTrue(updater.fallback_reason)
+                calls.clear();cancel=threading.Event();cancel.set()
+                with self.assertRaises(Cancelled):updater.download(release,cancel,lambda _:None)
+                self.assertFalse(any(name.endswith('.exe') for name in calls))
+
+    def test_optional_index_does_not_break_full_channel_when_invalid(self):
+        data=metadata();data['assets'].append(dict(name='windows-update-manifest.json',size=True))
+        self.assertIsNone(parse_windows_release(data,'0.1.21').update_asset)
+
     def test_retired_account_release_is_not_accepted_by_migration_channel(self):
         data=metadata('0.1.25')
         retired='Qiaozhang13/electricity-toolbox-rust-windows'

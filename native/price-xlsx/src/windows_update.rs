@@ -17,6 +17,7 @@ mod implementation {
         schema: u32, installer: PathBuf, sha256: String, size: u64, version: String,
         target_dir: PathBuf, app_home: PathBuf, processes: Vec<Process>, token: String,
         #[serde(default = "wait_timeout")] wait_timeout_ms: u64,
+        #[serde(default)] staging_dir: Option<PathBuf>,
     }
     fn wait_timeout() -> u64 { 60_000 }
     type RawHandle = *mut c_void;
@@ -31,6 +32,8 @@ mod implementation {
     unsafe extern "system" {
         fn RegOpenKeyExW(key: RawHandle, subkey: *const u16, options: u32, access: u32, result: *mut RawHandle) -> i32;
         fn RegCloseKey(key: RawHandle) -> i32;
+        fn RegQueryValueExW(key: RawHandle, name: *const u16, reserved: *mut u32, kind: *mut u32, data: *mut u8, size: *mut u32) -> i32;
+        fn RegSetValueExW(key: RawHandle, name: *const u16, reserved: u32, kind: u32, data: *const u8, size: u32) -> i32;
     }
     struct Handle(RawHandle);
     impl Drop for Handle { fn drop(&mut self) { unsafe { CloseHandle(self.0); } } }
@@ -73,6 +76,7 @@ mod implementation {
     }
     fn report(cache: &Path, plan: &Plan, mut value: Value) -> Result<(), String> {
         value["cache"] = json!(cache);
+        value["mode"] = json!(if plan.schema == 2 {"delta"} else {"full"});
         atomic_json(&cache.join("status.json"), &value)?;
         atomic_json(&plan.app_home.join("state/windows-update.json"), &value)
     }
@@ -84,7 +88,8 @@ mod implementation {
     fn validate(plan: &Plan, cache: &Path) -> Result<Vec<Handle>, String> {
         let valid_version = plan.version.split('.').count() >= 2 && plan.version.split('.').count() <= 4
             && plan.version.split('.').all(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
-        if plan.schema != 1 || !valid_version || plan.token.len() < 8 || plan.token.len() > 80
+        if !matches!(plan.schema,1|2) || (plan.schema == 2) != plan.staging_dir.is_some()
+            || !valid_version || plan.token.len() < 8 || plan.token.len() > 80
             || !plan.token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
             || plan.sha256.len() != 64 || !plan.sha256.bytes().all(|b| b.is_ascii_hexdigit())
             || plan.size == 0 || plan.size > 2 * 1024u64.pow(3)
@@ -96,6 +101,11 @@ mod implementation {
         let target = plan.target_dir.canonicalize().map_err(|e| e.to_string())?;
         let home = plan.app_home.canonicalize().map_err(|e| e.to_string())?;
         let installer = plan.installer.canonicalize().map_err(|e| e.to_string())?;
+        if let Some(stage) = &plan.staging_dir {
+            crate::windows_delta::plain(&plan.target_dir)?;
+            let stage = crate::windows_delta::stage_path(&target, stage, &plan.token)?;
+            if home.starts_with(&stage) || cache.starts_with(&stage) || plan.size > 32*1024*1024 {return Err("Windows 增量目录或清单大小无效".into());}
+        }
         if target.parent().is_none() || target.file_name().is_none() || home.starts_with(&target)
             || installer.parent() != Some(cache) || cache.starts_with(&target)
             || !target.join("payload/manifest.json").is_file()
@@ -155,6 +165,26 @@ mod implementation {
     mod tests {
         use super::*;
         #[test]
+        fn delta_updates_only_matching_quoted_install_location() {
+            let reg=PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/reg.exe");
+            let subkey=format!(r"Software\ElectricityToolboxDeltaTest{}",std::process::id());
+            let key=format!(r"HKCU\{subkey}");
+            struct Cleanup(PathBuf,String);impl Drop for Cleanup{fn drop(&mut self){let _=command(&self.0).args(["delete",&self.1,"/f"]).status();}}
+            let _cleanup=Cleanup(reg.clone(),key.clone());
+            let target=std::env::temp_dir();
+            let quoted=format!("\"{}\"",target.display());
+            assert!(command(&reg).args(["add",&key,"/v","InstallLocation","/d",&quoted,"/f"]).status().unwrap().success());
+            let plan:Plan=serde_json::from_value(json!({"schema":2,"installer":"unused","sha256":"unused","size":1,"version":"9.1.2",
+                "target_dir":target,"app_home":target,"processes":[],"token":"test-token","staging_dir":target})).unwrap();
+            update_registered_version_key(&plan,&subkey).unwrap();
+            let result=command(&reg).args(["query",&key,"/v","DisplayVersion"]).stdout(Stdio::piped()).output().unwrap();
+            assert!(String::from_utf8_lossy(&result.stdout).contains("9.1.2"));
+            assert!(command(&reg).args(["add",&key,"/v","InstallLocation","/d",r"C:\does-not-exist-toolbox-foreign","/f"]).status().unwrap().success());
+            let mut plan=plan;plan.version="9.1.3".into();update_registered_version_key(&plan,&subkey).unwrap();
+            let result=command(&reg).args(["query",&key,"/v","DisplayVersion"]).stdout(Stdio::piped()).output().unwrap();
+            assert!(String::from_utf8_lossy(&result.stdout).contains("9.1.2"));
+        }
+        #[test]
         fn rollback_restores_exact_registry_key_including_absence() {
             assert!(registry_open_status(5).is_err(),"access denied must not mean missing metadata");
             assert!(!registry_open_status(2).unwrap());
@@ -186,6 +216,10 @@ mod implementation {
             digest.update(&buffer[..count]);
         }
         if format!("{:x}", digest.finalize()) != plan.sha256.to_lowercase() { return Err("安装包 SHA-256 校验失败".into()); }
+        if let Some(stage) = &plan.staging_dir {
+            crate::windows_delta::stage_path(&plan.target_dir,stage,&plan.token)?;
+            crate::windows_delta::verify_prepared(&plan.installer,&plan.target_dir,stage,&plan.version)?;
+        }
         let backup = plan.target_dir.with_file_name(format!(".electricity-toolbox-rollback-{}", plan.token));
         let failed = plan.target_dir.with_file_name(format!(".electricity-toolbox-failed-{}", plan.token));
         if backup.exists() || failed.exists() { return Err("更新恢复目录已存在".into()); }
@@ -195,9 +229,15 @@ mod implementation {
             let target_text = plan.target_dir.to_str().ok_or("安装路径编码无效")?;
             if target_text.contains(['"', '\r', '\n']) { return Err("安装路径包含无效字符".into()); }
             // NSIS requires /D= to be last and unquoted, including when it has spaces.
-            let status = command(&plan.installer).args(["/S", "/UPDATE"])
-                .raw_arg(format!("/D={target_text}")).status().map_err(|e| e.to_string())?;
-            if !status.success() { return Err(format!("Windows 安装程序退出码 {}", status.code().unwrap_or(-1))); }
+            if let Some(stage) = &plan.staging_dir {
+                fs::rename(stage,&plan.target_dir).map_err(|e|format!("增量目录切换失败：{e}"))?;
+                update_registered_version(plan)?;
+            } else {
+                crate::windows_delta::preserve_extras(&backup,&plan.target_dir)?;
+                let status = command(&plan.installer).args(["/S", "/UPDATE"])
+                    .raw_arg(format!("/D={target_text}")).status().map_err(|e| e.to_string())?;
+                if !status.success() { return Err(format!("Windows 安装程序退出码 {}", status.code().unwrap_or(-1))); }
+            }
             let manifest: Value = serde_json::from_slice(&fs::read(plan.target_dir.join("payload/manifest.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             if manifest["version"] != plan.version || !plan.target_dir.join("electricity-toolbox.exe").is_file() {
                 return Err("安装后的版本或程序文件校验失败".into());
@@ -218,6 +258,29 @@ mod implementation {
         command(plan.target_dir.join("electricity-toolbox.exe"))
             .current_dir(&plan.target_dir).env("TOOLBOX_APP_HOME", &plan.app_home)
             .env_remove("TOOLBOX_WORKSPACE").spawn().map(|child| child.id()).map_err(|e| format!("自动启动失败，请重新打开工具箱：{e}"))
+    }
+    fn update_registered_version(plan:&Plan)->Result<(),String> {
+        update_registered_version_key(plan,r"Software\Microsoft\Windows\CurrentVersion\Uninstall\电力工具箱")
+    }
+    fn update_registered_version_key(plan:&Plan,key:&str)->Result<(),String> {
+        let wide=|s:&str|s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+        let key=wide(key);
+        let mut handle=std::ptr::null_mut();
+        let status=unsafe{RegOpenKeyExW((-2147483647isize) as RawHandle,key.as_ptr(),0,0x20019|2,&mut handle)};
+        if !registry_open_status(status)?{return Ok(());}
+        struct Key(RawHandle);impl Drop for Key{fn drop(&mut self){unsafe{RegCloseKey(self.0);}}}
+        let _key=Key(handle);let mut buffer=vec![0u16;32768];let mut size=(buffer.len()*2) as u32;let mut kind=0;
+        let status=unsafe{RegQueryValueExW(handle,wide("InstallLocation").as_ptr(),std::ptr::null_mut(),&mut kind,buffer.as_mut_ptr() as *mut u8,&mut size)};
+        if status==2{return Ok(());}
+        if status!=0 || kind!=1 || size%2!=0 || size<2{return Err("卸载信息安装目录无效".into());}
+        let text=String::from_utf16_lossy(&buffer[..size as usize/2]).trim_end_matches('\0').to_owned();
+        // NSIS stores InstallLocation wrapped in quotes. A stale/foreign
+        // installation key must not prevent a portable sibling update.
+        let location=PathBuf::from(text.trim_matches('"'));
+        if normalized(&location).ok()!=Some(normalized(&plan.target_dir)?){return Ok(());}
+        let version=wide(&plan.version);
+        let status=unsafe{RegSetValueExW(handle,wide("DisplayVersion").as_ptr(),0,1,version.as_ptr() as *const u8,(version.len()*2) as u32)};
+        if status!=0{return Err(format!("无法更新 Windows 版本信息（{status}）"));}Ok(())
     }
     pub fn run(path: &Path) -> Result<(), String> {
         let cache = path.parent().ok_or("更新计划路径无效")?.canonicalize().map_err(|e| e.to_string())?;
@@ -251,6 +314,9 @@ mod implementation {
             }
             Err(error) => {
                 let aborted = error == "已取消更新";
+                if let Some(stage)=&plan.staging_dir {
+                    if stage.exists() && crate::windows_delta::stage_path(&plan.target_dir,stage,&plan.token).is_ok(){let _=crate::windows_delta::cleanup(stage);}
+                }
                 report(&cache, &plan, json!({"state":if aborted {"aborted"} else {"failed"},"version":plan.version,"error":error}))?;
                 if exited && !aborted && plan.target_dir.join("electricity-toolbox.exe").is_file() { let _ = relaunch(&plan); }
                 if aborted { Ok(()) } else { Err(error) }

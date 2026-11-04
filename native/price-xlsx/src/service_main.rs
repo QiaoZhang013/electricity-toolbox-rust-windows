@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 mod service_process;
 mod windows_update;
+mod windows_delta;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::{collections::{HashMap, VecDeque}, fs, io::{self, BufRead, BufReader, Write},

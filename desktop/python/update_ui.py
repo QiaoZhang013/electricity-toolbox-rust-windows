@@ -122,7 +122,7 @@ class UpdateWindow(tk.Toplevel):
         self.progress = ttk.Progressbar(body, maximum=100)
         self.progress.grid(sticky="ew", pady=(12, 8))
         self.status = tk.StringVar(self, "开始更新后将自动下载、校验、退出并安装，再重新启动工具箱；配置和数据保留。" +
-                                  ('Windows 使用完整安装包，安装失败自动恢复旧程序。' if self.is_windows else '日常优先使用增量补丁。'))
+                                  ('Windows 优先下载小补丁；补丁不适用时使用完整安装包，安装失败自动恢复旧程序。' if self.is_windows else '日常优先使用增量补丁。'))
         ttk.Label(body, textvariable=self.status, wraplength=490).grid(sticky="w", pady=(0, 16))
         actions = ttk.Frame(body)
         actions.grid(sticky="ew")
@@ -175,7 +175,12 @@ class UpdateWindow(tk.Toplevel):
     def download_progress(self, fraction, error):
         if self.winfo_exists():
             self.progress["value"] = fraction * 100
-            self.status.set(f"正在下载并准备更新 · {fraction:.0%}")
+            updater = self.controller.updater
+            phase = getattr(updater, 'phase', '')
+            size = getattr(updater, 'download_bytes', 0)
+            mode = '增量更新' if getattr(updater, 'update_mode', '') == 'delta' else '完整更新'
+            self.status.set(f"{mode} · {size/1024**2:.1f} MB · {phase} · {fraction:.0%}"
+                            if phase and size else f"正在下载并准备更新 · {fraction:.0%}")
 
     def download_finished(self, path, error):
         if not self.winfo_exists():

@@ -57,6 +57,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s desktop/tests/python -p test_windows_update_helper.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s desktop/tests/python -p test_windows_delta.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s desktop/tests/python -p test_windows_update_build.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Workbook and native backend regression
         working-directory: 电力工具箱
         run: |
@@ -73,7 +77,9 @@ jobs:
           cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows installer
-        if: github.event_name == 'workflow_dispatch' && inputs.installer
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installer
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -m venv .venv --system-site-packages
           uv python install 3.12 --install-dir .toolbox/standalone-python --no-bin
@@ -81,7 +87,7 @@ jobs:
           $runtime = Get-ChildItem .toolbox/standalone-python -Directory -Filter '*windows-x86_64-none' | Select-Object -First 1
           ./packaging/windows/build.ps1 -PythonRoot $runtime.FullName
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.installer
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installer
         with:
           name: electricity-toolbox-windows-x64
           path: dist/windows/*

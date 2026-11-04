@@ -59,6 +59,16 @@ class UpdateUiTests(unittest.TestCase):
         self.assertNotIn('增量',window.status.get())
         self.assertNotIn('Apple',window.platform_text)
 
+    def test_windows_progress_shows_delta_size_and_preparation_phase(self):
+        self.controller.release = Release('v0.1.28','更新','https://github.com/test/repo/releases/tag/v0.1.28',
+                                          {'name':'ElectricityToolbox_0.1.28_windows_x64_setup.exe'})
+        self.controller.show()
+        self.updater.update_mode='delta';self.updater.download_bytes=2*1024**2
+        self.updater.phase='复用运行环境并校验新版本'
+        self.controller.window.download_progress(.8,None)
+        self.assertIn('增量更新 · 2.0 MB',self.controller.window.status.get())
+        self.assertIn('复用运行环境',self.controller.window.status.get())
+
     def test_automatic_errors_are_silent_but_manual_errors_are_visible(self):
         with patch("update_ui.messagebox.showerror") as error:
             self.controller.checked(None, ValueError("离线"))
