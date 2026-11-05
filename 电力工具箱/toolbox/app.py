@@ -195,8 +195,9 @@ class ToolboxApp(tk.Tk):
         self.status_bar.grid(row=0, column=0, sticky="ew")
         self.rail_toggle = ttk.Button(status, text="收起辅助面板", command=self.toggle_right_rail, style="Quiet.TButton")
         self.rail_toggle.grid(row=0, column=1, sticky="e")
+        self.update_retry_button = ttk.Button(status, text="检查更新", style="Quiet.TButton", cursor="hand2")
         self.version_label = ttk.Label(status, text=application_version(), anchor="e", style="Status.TLabel")
-        self.version_label.grid(row=0, column=2, sticky="e", padx=(14, 0))
+        self.version_label.grid(row=0, column=3, sticky="e", padx=(14, 0))
         self.show_page(default_catalog()[0].name if self._lazy_pages else PAGE_NAMES[0])
 
     def set_update_available(self, available: bool) -> None:
@@ -204,6 +205,14 @@ class ToolboxApp(tk.Tk):
             self.update_button.pack(anchor="w")
         else:
             self.update_button.pack_forget()
+
+    def set_update_check_failed(self, failed: bool, *, retry=None) -> None:
+        if retry is not None:
+            self.update_retry_button.configure(command=retry)
+        if failed:
+            self.update_retry_button.grid(row=0, column=2, sticky="e", padx=(14, 0))
+        else:
+            self.update_retry_button.grid_remove()
 
     def _resize_navigation(self, _event=None) -> None:
         width = self.nav_canvas.winfo_width()

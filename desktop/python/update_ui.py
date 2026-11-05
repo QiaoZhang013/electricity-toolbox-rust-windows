@@ -13,6 +13,9 @@ from github_update import Cancelled, GitHubUpdater
 
 
 class UpdateController:
+    RETRY_DELAY_MS = 30_000
+    RECHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
+
     def __init__(self, app, service, updater=None):
         self.app, self.service = app, service
         self.updater = updater or GitHubUpdater(os.environ.get("TOOLBOX_APP_VERSION", "0.1.3"))
@@ -20,9 +23,13 @@ class UpdateController:
         self.checking = False
         self.manual = False
         self.window = None
+        self._retry_count = 0
+        self._retry_after = None
         self.messages = queue.Queue()
+        self.app.set_update_check_failed(False, retry=lambda: self.check(manual=True))
         self.app.after(40, self.poll)
-        self.app.after(300, self.check)
+        self._initial_after = self.app.after(300, self._initial_check)
+        self.app.after(self.RECHECK_INTERVAL_MS, self._periodic_check)
 
     def worker(self, operation, done):
         def run():
@@ -43,10 +50,33 @@ class UpdateController:
             callback(result, error)
         self.app.after(40, self.poll)
 
-    def check(self, manual=False):
+    def _cancel_retry(self):
+        if self._retry_after is not None:
+            self.app.after_cancel(self._retry_after)
+            self._retry_after = None
+
+    def _initial_check(self):
+        self._initial_after = None
+        self.check()
+
+    def _retry_check(self):
+        self._retry_after = None
+        self.check(_retry=True)
+
+    def _periodic_check(self):
+        self.app.after(self.RECHECK_INTERVAL_MS, self._periodic_check)
+        self.check()
+
+    def check(self, manual=False, *, _retry=False):
         self.manual = self.manual or manual
         if self.checking:
             return
+        if self._initial_after is not None:
+            self.app.after_cancel(self._initial_after)
+            self._initial_after = None
+        self._cancel_retry()
+        if not _retry:
+            self._retry_count = 0
         self.checking = True
         self.worker(self.updater.check, self.checked)
 
@@ -54,9 +84,16 @@ class UpdateController:
         self.checking = False
         manual, self.manual = self.manual, False
         if error:
+            self.app.set_update_check_failed(True)
+            if self._retry_count < 2 and self._retry_after is None:
+                self._retry_count += 1
+                self._retry_after = self.app.after(self.RETRY_DELAY_MS, self._retry_check)
             if manual:
                 messagebox.showerror("无法检查更新", str(error), parent=self.app)
             return
+        self._cancel_retry()
+        self._retry_count = 0
+        self.app.set_update_check_failed(False)
         self.release = release
         self.app.set_update_available(release is not None)
         if manual:

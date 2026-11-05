@@ -135,7 +135,7 @@ class GitHubUpdateTests(unittest.TestCase):
         return opener, calls
 
     def test_rate_limit_falls_back_to_public_release_with_verified_metadata(self):
-        for status in (403, 429):
+        for status in (403, 429, 500, 503):
             opener, calls = self.public_opener(status)
             result = GitHubUpdater("0.1.3", opener=opener).check()
             self.assertEqual(result.version, "v1.2.0")
@@ -144,6 +144,28 @@ class GitHubUpdateTests(unittest.TestCase):
             self.assertEqual(result.asset["digest"], release()["assets"][0]["digest"])
             self.assertEqual(result.update_asset["name"], "update-manifest.json")
             self.assertEqual(sum(method == "HEAD" for _, method in calls), 2)
+
+    def test_network_failures_use_public_site_with_ten_second_request_timeout(self):
+        errors=(TimeoutError('API timeout'),urllib.error.URLError('DNS unavailable'),
+                ConnectionResetError('connection reset'))
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                public,_=self.public_opener();timeouts=[]
+                def opener(request,timeout):
+                    timeouts.append(timeout)
+                    if request.full_url.startswith('https://api.github.com/'):raise error
+                    return public(request,timeout)
+                result=GitHubUpdater('0.1.3',opener=opener).check()
+                self.assertEqual(result.version,'v1.2.0')
+                self.assertEqual(result.asset['digest'],release()['assets'][0]['digest'])
+                self.assertEqual(set(timeouts),{10})
+        first=urllib.error.URLError('API unreachable')
+        def offline(request,timeout):
+            if request.full_url.startswith('https://api.github.com/'):raise first
+            raise TimeoutError('public site unreachable')
+        with self.assertRaisesRegex(UpdateError,'API unreachable.*备用检测失败.*public site unreachable') as error:
+            GitHubUpdater('0.1.3',opener=offline).check()
+        self.assertIs(error.exception.__cause__,first)
 
     def test_public_fallback_rejects_invalid_metadata_and_preserves_first_error(self):
         for options in ({"page": "https://evil.example/tag/v1.2.0"},

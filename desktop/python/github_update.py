@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 REPOSITORY = "a792275829-cpu/electricity-toolbox-scripts"
+CHECK_TIMEOUT = 10
 
 
 class UpdateError(ValueError):
@@ -178,20 +180,20 @@ class GitHubUpdater:
                      "X-GitHub-Api-Version": "2022-11-28", "Cache-Control": "no-cache"},
         )
         try:
-            with self.open(request, timeout=20) as response:
+            with self.open(request, timeout=CHECK_TIMEOUT) as response:
                 if response.status != 200:
                     raise UpdateError(f"更新服务返回错误（HTTP {response.status}）")
                 data = json.loads(response.read(2 * 1024 * 1024))
             return self.parse_data(data)
-        except urllib.error.HTTPError as exc:
-            if exc.code in {403, 429}:
-                try:
-                    return self.check_public_release()
-                except Exception as fallback:
-                    raise UpdateError(f"GitHub 更新接口受限（HTTP {exc.code}）；备用检测失败：{fallback}") from exc
-            messages = {403: "GitHub 请求次数已达上限，请稍后重试", 429: "GitHub 请求次数已达上限，请稍后重试",
-                        404: "更新仓库尚未发布正式版本"}
-            raise UpdateError(messages.get(exc.code, f"更新服务返回错误（HTTP {exc.code}）")) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            if isinstance(exc,urllib.error.HTTPError) and exc.code not in {403,429} and exc.code<500:
+                message="更新仓库尚未发布正式版本" if exc.code==404 else f"更新服务返回错误（HTTP {exc.code}）"
+                raise UpdateError(message) from exc
+            detail=f"HTTP {exc.code}" if isinstance(exc,urllib.error.HTTPError) else str(exc)
+            try:
+                return self.check_public_release()
+            except Exception as fallback:
+                raise UpdateError(f"GitHub 更新接口不可用（{detail}）；备用检测失败：{fallback}") from exc
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise UpdateError("GitHub 版本信息无效") from exc
 
@@ -201,7 +203,7 @@ class GitHubUpdater:
         def request(url, method="GET"):
             return self.open(urllib.request.Request(url, method=method, headers={
                 "User-Agent": f"ElectricityToolbox/{self.current}", "Cache-Control": "no-cache",
-            }), timeout=20)
+            }), timeout=CHECK_TIMEOUT)
 
         def read_html(response):
             raw = response.read(2 * 1024 * 1024 + 1)

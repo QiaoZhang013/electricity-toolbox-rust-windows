@@ -77,6 +77,16 @@ class UpdateUiTests(unittest.TestCase):
             self.controller.checked(None, ValueError("离线"))
             error.assert_called_once()
 
+    def test_failed_check_offers_footer_retry_and_success_hides_it(self):
+        self.controller.checked(None,ValueError('offline'))
+        self.assertEqual(self.app.update_retry_button.winfo_manager(),'grid')
+        self.assertEqual(self.app.update_retry_button.cget('text'),'检查更新')
+        with patch.object(self.controller,'worker') as worker,patch('update_ui.messagebox.showinfo'):
+            self.app.update_retry_button.invoke()
+            self.assertTrue(self.controller.checking)
+            worker.call_args.args[1](None,None)
+        self.assertEqual(self.app.update_retry_button.winfo_manager(),'')
+
     def test_dmg_download_cancellation_waits_for_worker_ack(self):
         self.controller.release = self.release
         self.controller.show()
@@ -193,6 +203,46 @@ class UpdateUiTests(unittest.TestCase):
         self.assertTrue(self.service.maintenance)
         self.assertFalse(any('ToolboxUpdateLock' in tag for tag in window.cancel_button.bindtags()))
 
+
+class UpdateScheduleTests(unittest.TestCase):
+    class Scheduler:
+        def __init__(self):
+            self.pending={};self.serial=0
+            self.set_update_available=Mock();self.set_update_check_failed=Mock()
+        def after(self,delay,callback):
+            self.serial+=1;self.pending[self.serial]=(delay,callback);return self.serial
+        def after_cancel(self,key):self.pending.pop(key,None)
+        def run(self,delay):
+            key=next(k for k,v in self.pending.items() if v[0]==delay)
+            self.pending.pop(key)[1]()
+        def count(self,delay):return sum(v[0]==delay for v in self.pending.values())
+    def setUp(self):
+        self.app=self.Scheduler();self.updater=Mock(current='0.1.28')
+        self.controller=UpdateController(self.app,Mock(),self.updater)
+        self.controller.worker=Mock()
+    def test_failures_retry_twice_at_thirty_seconds_then_stop(self):
+        self.app.run(300)
+        for _ in range(2):
+            self.controller.checked(None,ValueError('offline'))
+            self.assertEqual(self.app.count(30000),1)
+            self.app.run(30000)
+        self.controller.checked(None,ValueError('offline'))
+        self.assertEqual(self.app.count(30000),0)
+        self.assertEqual(self.controller.worker.call_count,3)
+    def test_manual_check_before_startup_cancels_delayed_duplicate(self):
+        self.controller.check(manual=True)
+        self.assertEqual(self.app.count(300),0)
+    def test_success_cancels_pending_retry_and_periodic_checks_continue(self):
+        self.app.run(300);self.controller.checked(None,ValueError('offline'))
+        self.controller.check();self.controller.checked(None,None)
+        self.assertEqual(self.app.count(30000),0)
+        self.assertEqual(self.app.count(10800000),1)
+        self.app.run(10800000)
+        self.assertTrue(self.controller.checking)
+        self.assertEqual(self.app.count(10800000),1)
+        calls=self.controller.worker.call_count
+        self.controller.check(manual=True)
+        self.assertEqual(self.controller.worker.call_count,calls)
 
 if __name__ == "__main__":
     unittest.main()
