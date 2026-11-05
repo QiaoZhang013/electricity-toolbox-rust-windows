@@ -1,8 +1,8 @@
 # 电力工具箱 · Windows 10 / 11 x64 版
 
-[下载 Windows x64 完整安装包 v0.1.28](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/download/v0.1.28/ElectricityToolbox_0.1.28_windows_x64_setup.exe)
+[下载 Windows x64 完整安装包 v0.1.29](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/download/v0.1.29/ElectricityToolbox_0.1.29_windows_x64_setup.exe)
 
-[安装包 SHA-256](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/download/v0.1.28/ElectricityToolbox_0.1.28_windows_x64_setup.exe.sha256) · [版本说明与全部附件](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/tag/v0.1.28)
+[安装包 SHA-256](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/download/v0.1.29/ElectricityToolbox_0.1.29_windows_x64_setup.exe.sha256) · [版本说明与全部附件](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/tag/v0.1.29)
 
 ## 下载与安装
 
@@ -16,6 +16,8 @@
 
 ## 后续更新
 
+0.1.29 支持 API 不可用时改用 GitHub 发布页检测；检测失败可点击版本号旁的“检查更新”。如果旧版因网络问题无法发现新版本，请先手动安装 0.1.29 一次，配置和数据保留。
+
 0.1.28 起优先使用 Windows 小补丁更新并复用现有运行环境；补丁不可用时回退完整安装包。0.1.27 及更早版本需最后完整升级一次。
 
 升级前退出旧工具箱，并备份自己的配置与业务数据。安装包用于更新程序；请保留原有数据目录。
@@ -26,7 +28,7 @@
 
 ## 开发与维护
 
-[下载 v0.1.28 源码包（可在 Mac 上解压）](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/download/v0.1.28/ElectricityToolbox-0.1.28-source.zip)。源码用于开发，直接使用请下载上方 Windows 安装包。
+[下载 v0.1.29 源码包（可在 Mac 上解压）](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/releases/download/v0.1.29/ElectricityToolbox-0.1.29-source.zip)。源码用于开发，直接使用请下载上方 Windows 安装包。
 
 [GitHub Actions](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/actions) · `main` 提供 Windows 安装说明与 Actions 入口；[已公开源码和开发文档在 `development` 分支](https://github.com/QiaoZhang013/electricity-toolbox-rust-windows/tree/development)。每个版本的修复、验证范围和发行文件，以相应发布页面说明为准。
 
