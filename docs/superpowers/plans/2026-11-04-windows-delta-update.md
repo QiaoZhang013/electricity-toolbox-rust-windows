@@ -48,7 +48,7 @@ serde/sha2/std, original Tk and NSIS.
 4. [x] Add release-builder tests and `packaging/windows/build_updates.py`.
    Retain history and three verified direct patches; integrate build.ps1 and
    document initial-full/then-incremental operation and full-only resets.
-5. [ ] Run focused/full updater and relevant Tk/service/WPS tests. Fresh-context
+5. [x] Run focused/full updater and relevant Tk/service/WPS tests. Fresh-context
    review, address concrete findings, rerun affected tests. Version.py set 0.1.28
    with concrete notes and results; compile native service and host, refresh
    payload, build/accept full installer and three historical patches. Preserve
@@ -83,3 +83,5 @@ serde/sha2/std, original Tk and NSIS.
 - Production acceptance found a real long-path failure: the UUID sibling stage exceeded Win32 MAX_PATH for a nested Playwright dependency, causing WinError 3 and safe full fallback. The source installation inventory exactly matched the patch. A packaged-Python 3.12 regression first failed in both hard-link and forced-copy modes; extended paths are now used only for filesystem I/O, preserving public stage ownership/path contracts. Core 12/12 and updater suite 70 (55 pass, 15 mac-only skip) passed. Unpublished installer/patch assets must be rebuilt and accepted again; no release was published.
 
 - Final production acceptance B installed/restarted and preserved all program/data fixtures, but first-launch cache cleanup failed: a live relaunched process inherited helper.log even when child stdio was replaced. A real NSIS sleeper regression reproduced WinError32. Clearing inheritance on the detached helper standard handles made that same test pass; updater regression now 71 tests (56 pass,15 mac-only skip), including15 real helper tests. Candidate B artifacts and failure evidence retained under ignored pre-log-inherit directories. No v0.1.28 release has been published; rebuild and full acceptance required again.
+
+- Task 5 complete: all three authentic baseline patches restored with complete inventories and original trees unchanged. Actual local legacy full bootstrap and new-client delta against genuine 0.1.27 automatically installed/restarted; 657 files and 11 isolated data fixtures preserved, Excel 0.125/0.00% read back. Runtime inode retained; delta first-launch cache/rollback removed. Legacy full bootstrap removes the large installer immediately and its small inherited-log metadata on the next normal launch. Official uninstaller removed all payload and retained the extra local note. Receipts: D:/electricity-toolbox-build/windows-{delta-local,full-local}-0.1.27-to-0.1.28-20261104/results/verification.json and windows-delta-uninstall-0.1.28/verification.json.
