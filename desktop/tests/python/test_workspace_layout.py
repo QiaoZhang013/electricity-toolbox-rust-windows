@@ -18,6 +18,27 @@ from toolbox_storage import data_path
 
 
 class LayoutTests(unittest.TestCase):
+    def test_regular_container_redirect_is_not_a_directory_escape(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder)/'managed';base.mkdir()
+            target=base/'module/config.json';target.parent.mkdir();target.write_text('keep')
+            actual_resolve=Path.resolve
+            def redirected(path,*args,**kwargs):
+                if path==target:return Path(folder)/'container-cache/module/config.json'
+                return actual_resolve(path,*args,**kwargs)
+            with patch.object(Path,'resolve',redirected):
+                self.assertEqual(installer.safe(base,'module/config.json'),target)
+
+    def test_installer_rejects_real_directory_escape_and_traversal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder)/'managed';base.mkdir();outside=Path(folder)/'private';outside.mkdir()
+            link=base/'escape'
+            if os.name=='nt':
+                subprocess.run(['cmd.exe','/c','mklink','/J',str(link),str(outside)],check=True,capture_output=True)
+            else:link.symlink_to(outside,target_is_directory=True)
+            for relative in ('escape/secret.json','escape','../secret.json','.. /secret.json','.../secret.json','C:/secret.json'):
+                with self.subTest(relative=relative),self.assertRaises(ValueError):installer.safe(base,relative)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

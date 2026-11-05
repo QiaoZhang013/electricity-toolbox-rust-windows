@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
@@ -20,12 +21,24 @@ def safe(root: Path, relative: str) -> Path:
     if (
         name.is_absolute()
         or not name.parts
-        or any(p in ("..", ".") or "\\" in p or ":" in p for p in name.parts)
+        or any(p in ("..", ".") or p.endswith((".", " ")) or "\\" in p or ":" in p for p in name.parts)
     ):
         raise ValueError(f"非法更新路径：{relative}")
     target = root.joinpath(*name.parts)
-    if not target.resolve().is_relative_to(root.resolve()):
-        raise ValueError("更新路径超出工作目录")
+    # MSIX can redirect ordinary AppData files into its cache while resolving
+    # the containing directory to the original path. Only actual filesystem
+    # links/reparse points can turn these validated relative components into
+    # an escape; checking every existing component also covers parent junctions.
+    current = root
+    for part in name.parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            break
+        if (stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400):
+            if not current.resolve().is_relative_to(root.resolve()):
+                raise ValueError("更新路径超出工作目录")
     return target
 
 
