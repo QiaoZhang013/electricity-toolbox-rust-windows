@@ -21,12 +21,18 @@ class WindowsHelperTests(unittest.TestCase):
         cls.fixtures=tempfile.TemporaryDirectory(prefix='update-nsis-')
         folder=Path(cls.fixtures.name)
         cls.installers={}
-        for name in ('good','fail','badapp'):
+        sleeper=folder/'sleeping-app.exe'
+        sleeper_script=folder/'sleeping-app.nsi'
+        sleeper_script.write_text('Unicode true\nRequestExecutionLevel user\nSilentInstall silent\nSetCompress off\n'
+            f'OutFile "{sleeper}"\nSection\nSleep 20000\nSectionEnd\n',encoding='utf-8-sig')
+        subprocess.run([str(MAKENSIS),str(sleeper_script)],check=True,capture_output=True,timeout=30,creationflags=subprocess.CREATE_NO_WINDOW)
+        for name in ('good','fail','badapp','hold'):
             fail=name=='fail'
             manifest=folder/(name+'.json');manifest.write_text(json.dumps({'version':'9.0.1'}))
             installer=folder/(name+'.exe')
             script=folder/(name+'.nsi')
             binary=SERVICE
+            if name=='hold':binary=sleeper
             if name=='badapp':
                 binary=folder/'not-a-program.exe';binary.write_bytes(b'MZinvalid')
             script.write_text('Unicode true\nRequestExecutionLevel user\nSilentInstall silent\nSetCompress off\n'
@@ -107,6 +113,29 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.1')
         self.assertEqual((self.home/'keep.txt').read_text(),'KEEP-DATA')
         self.assertGreater(self.status()['relaunch_pid'],0)
+
+    def test_relaunched_application_does_not_inherit_helper_log(self):
+        from unittest.mock import patch
+        import signal
+        original=subprocess.Popen
+        log=self.cache/'helper.log'
+        def spawn(*args,**kwargs):
+            if '--windows-update-helper' in args[0]:
+                with log.open('wb') as stream:
+                    return original(*args,**{**kwargs,'stderr':stream})
+            return original(*args,**kwargs)
+        pid=None
+        try:
+            with patch('subprocess.Popen',side_effect=spawn):self.launch('hold')
+            self.commit()
+            self.assertEqual(self.status()['state'],'succeeded',self.status())
+            pid=self.status()['relaunch_pid']
+            log.unlink()  # Must be removable while the relaunched app is still alive.
+            self.assertFalse(log.exists())
+        finally:
+            if pid:
+                try:os.kill(pid,signal.SIGTERM)
+                except OSError:pass
 
     def test_partial_install_failure_restores_old_program_and_data(self):
         self.launch('fail');self.commit()

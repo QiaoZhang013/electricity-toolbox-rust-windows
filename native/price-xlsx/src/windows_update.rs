@@ -27,6 +27,8 @@ mod implementation {
         fn QueryFullProcessImageNameW(handle: RawHandle, flags: u32, path: *mut u16, size: *mut u32) -> i32;
         fn WaitForSingleObject(handle: RawHandle, milliseconds: u32) -> u32;
         fn CloseHandle(handle: RawHandle) -> i32;
+        fn GetStdHandle(kind: u32) -> RawHandle;
+        fn SetHandleInformation(handle: RawHandle, mask: u32, flags: u32) -> i32;
     }
     #[link(name = "advapi32")]
     unsafe extern "system" {
@@ -283,6 +285,16 @@ mod implementation {
         if status!=0{return Err(format!("无法更新 Windows 版本信息（{status}）"));}Ok(())
     }
     pub fn run(path: &Path) -> Result<(), String> {
+        // Python redirects this detached helper's stderr to helper.log. Windows
+        // can inherit that handle even when Command replaces the child's stdio.
+        // Keep the helper's streams usable, but prevent installer/relaunch leaks.
+        for kind in [-10i32, -11, -12] {
+            let handle = unsafe { GetStdHandle(kind as u32) };
+            if !handle.is_null() && handle as isize != -1
+                && unsafe { SetHandleInformation(handle, 1, 0) } == 0 {
+                return Err(format!("无法隔离更新助手的日志句柄：{}", std::io::Error::last_os_error()));
+            }
+        }
         let cache = path.parent().ok_or("更新计划路径无效")?.canonicalize().map_err(|e| e.to_string())?;
         let plan: Plan = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         let handles = validate(&plan, &cache)?;
