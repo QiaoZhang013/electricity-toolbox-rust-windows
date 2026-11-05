@@ -169,11 +169,12 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(json.loads((self.target/'payload/manifest.json').read_text())['version'],'9.0.0')
         self.assertTrue(all(p.poll() is None for p in self.processes))
 
-    def launch_delta(self, badapp=False, **changes):
+    def launch_delta(self, badapp=False, extra_cache=False, **changes):
         import shutil
         from windows_delta import create_patch, prepare_update
         (self.target/'payload/runtime').mkdir()
         (self.target/'payload/runtime/keep.bin').write_bytes(b'unchanged runtime bytes')
+        (self.target/'payload/source.py').write_text('VALUE = 1\n')
         new=self.root/'new-release'
         shutil.copytree(self.target,new)
         (new/'payload/manifest.json').write_text('{"version":"9.0.1"}')
@@ -181,6 +182,9 @@ class WindowsHelperTests(unittest.TestCase):
         if badapp:(new/'electricity-toolbox.exe').write_bytes(b'MZinvalid')
         archive=self.cache/'patch.tar.xz'
         create_patch(self.target,new,archive)
+        if extra_cache:
+            (self.target/'payload/__pycache__').mkdir()
+            (self.target/'payload/__pycache__/source.cpython-312.pyc').write_bytes(b'generated cache')
         self.prepared=prepare_update(self.target,[(archive,'9.0.0','9.0.1')],'9.0.1',self.cache)
         artifact=self.prepared.manifest
         self.runtime_inode=(self.target/'payload/runtime/keep.bin').stat().st_ino
@@ -210,6 +214,16 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual((self.target/'payload/runtime/keep.bin').stat().st_ino,self.runtime_inode)
         self.assertEqual((self.home/'keep.txt').read_text(),'KEEP-DATA')
         self.assertFalse(list(self.root.glob('.electricity-toolbox-rollback-*')))
+
+    def test_real_helper_accepts_cache_removal_with_complete_original_inventory(self):
+        self.launch_delta(extra_cache=True)
+        self.assertTrue((self.target/'payload/__pycache__/source.cpython-312.pyc').is_file())
+        self.assertFalse((self.prepared.staging_dir/'payload/__pycache__').exists())
+        self.commit_delta()
+        self.assertEqual(self.status()['state'], 'succeeded', self.status())
+        self.assertEqual(self.status()['mode'], 'delta')
+        self.assertFalse((self.target/'payload/__pycache__').exists())
+        self.assertEqual((self.home/'keep.txt').read_text(), 'KEEP-DATA')
 
     def test_delta_stage_modified_after_ready_never_replaces_old_install(self):
         self.launch_delta()

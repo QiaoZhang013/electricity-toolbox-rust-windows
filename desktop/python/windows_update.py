@@ -294,11 +294,20 @@ class WindowsUpdater(GitHubUpdater):
         path = Path(home)/'state/windows-update.json'
         try:
             status = json.loads(path.read_text(encoding='utf-8'))
-            if status.get('state') != 'failed' or status.get('notified'):
+            if not isinstance(status, dict) or status.get('state') != 'failed' or status.get('notified'):
                 return None
+            try:
+                superseded = (isinstance(status.get('version'), str)
+                              and version_parts(status['version']) <= version_parts(self.current))
+            except UpdateError:
+                superseded = False
             status['notified'] = True
+            if superseded:
+                # Keep the original failure for diagnostics after a later full
+                # installation/retry has already installed this target or newer.
+                status['superseded_by'] = self.current.removeprefix('v')
             self._atomic_json(path, status)
-            return str(status.get('error') or '上次 Windows 更新未完成，请重试。')
+            return None if superseded else str(status.get('error') or '上次 Windows 更新未完成，请重试。')
         except (OSError, ValueError, TypeError):
             return None
 

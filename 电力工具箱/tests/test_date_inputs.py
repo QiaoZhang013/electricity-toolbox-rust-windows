@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 from unittest.mock import patch
 
-from toolbox.page_support import DateInput, normalize_date_input, parse_date_input
+from toolbox.page_support import DateInput, DateRangeInput, normalize_date_input, parse_date_input
 from toolbox.runtime import TaskRegistry, ToolPaths, load_module
 
 
@@ -215,7 +215,7 @@ class CalendarInputTests(unittest.TestCase):
                 page = page_type(self.root, ToolPaths(ROOT), TaskRegistry())
                 try:
                     def count_calendars(widget):
-                        return sum(isinstance(child, DateInput) + count_calendars(child)
+                        return sum(isinstance(child, DateInput) + 2 * isinstance(child, DateRangeInput) + count_calendars(child)
                                    for child in widget.winfo_children())
                     self.assertEqual(count_calendars(page), expected_count)
                     if page_type in (OnlineEnergyPage, WindForecastPage):

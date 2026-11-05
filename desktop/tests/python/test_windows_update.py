@@ -204,6 +204,26 @@ class WindowsChannelTests(unittest.TestCase):
             self.assertIn('已恢复旧程序',updater.take_install_error())
             self.assertIsNone(updater.take_install_error())
 
+    def test_failure_for_an_already_installed_version_is_archived_without_a_dialog(self):
+        with tempfile.TemporaryDirectory() as directory,patch.dict(os.environ,{'TOOLBOX_APP_HOME':directory}):
+            path=Path(directory)/'state/windows-update.json';path.parent.mkdir()
+            for target in ('0.1.28','0.1.29'):
+                with self.subTest(target=target):
+                    path.write_text(json.dumps(dict(state='failed',version=target,error='old failure')),encoding='utf-8')
+                    self.assertIsNone(WindowsUpdater('0.1.29').take_install_error())
+                    saved=json.loads(path.read_text(encoding='utf-8'))
+                    self.assertEqual(saved['error'],'old failure')
+                    self.assertTrue(saved['notified'])
+                    self.assertEqual(saved['superseded_by'],'0.1.29')
+
+    def test_failed_newer_version_still_reports_the_error(self):
+        with tempfile.TemporaryDirectory() as directory,patch.dict(os.environ,{'TOOLBOX_APP_HOME':directory}):
+            path=Path(directory)/'state/windows-update.json';path.parent.mkdir()
+            path.write_text(json.dumps(dict(state='failed',version='0.1.30',error='new failure')),encoding='utf-8')
+            updater=WindowsUpdater('0.1.29')
+            self.assertEqual(updater.take_install_error(),'new failure')
+            self.assertIsNone(updater.take_install_error())
+
     def test_successful_update_cache_is_removed_without_touching_other_files(self):
         with tempfile.TemporaryDirectory() as home,tempfile.TemporaryDirectory(prefix='ElectricityToolboxWindowsUpdate-') as cache:
             root=Path(cache);version='0.1.22'

@@ -224,6 +224,36 @@ def _metadata(raw, base, target):
         raise UpdateError('Windows 补丁清单无效') from error
 
 
+def _remove_added_bytecode(stage, current, expected):
+    """Discard regenerable extra caches in staging without relaxing managed hashes."""
+    if any(current.get(name) != item for name, item in expected.items()):
+        return False
+    extra = set(current) - set(expected)
+    for name in extra:
+        path, item = Path(name), current[name]
+        if not name.startswith('payload/'):
+            return False
+        if item['type'] == 'dir':
+            if path.name != '__pycache__' or expected.get(path.parent.as_posix()) != {'type': 'dir'}:
+                return False
+        else:
+            match = re.fullmatch(r'(.+)\.cpython-[0-9]+(?:\.opt-[12])?\.pyc', path.name)
+            if path.parent.name != '__pycache__' or match is None:
+                return False
+            source = (path.parent.parent / (match[1] + '.py')).as_posix()
+            if expected.get(source, {}).get('type') != 'file':
+                return False
+    # Validate the complete set before removing anything. Reparse points were
+    # already rejected by inventory(); unlinking hard links preserves live files.
+    for name in sorted(extra, key=lambda value: (-value.count('/'), value)):
+        path = stage / name
+        if current[name]['type'] == 'dir':
+            path.rmdir()
+        else:
+            path.unlink()
+    return True
+
+
 def apply_patch(stage, patch, expected_base, expected_target, cancel=None):
     stage = _io_path(stage)
     cancelled(cancel)
@@ -234,7 +264,9 @@ def apply_patch(stage, patch, expected_base, expected_target, cancel=None):
         with archive.extractfile(first) as stream:
             manifest = _metadata(stream.read(MAX_MANIFEST + 1), expected_base, expected_target)
         before, after = manifest['before'], manifest['after']
-        if install_version(stage) != expected_base or inventory(stage, cancel) != before:
+        current = inventory(stage, cancel)
+        if (install_version(stage) != expected_base
+                or (current != before and not _remove_added_bytecode(stage, current, before))):
             raise UpdateError('旧版程序文件已变化或版本不匹配，改用完整安装包')
         changed = {name for name in after if before.get(name) != after[name]}
         expected = {'files/' + name: after[name]['size'] for name in changed if after[name]['type'] == 'file'}

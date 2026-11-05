@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .file_dialogs import FileDialogState
-from .page_support import DateInput, DATE_INPUT_ERROR, DATE_INPUT_HINT, parse_date_input
+from .page_support import DateRangeInput, DATE_INPUT_ERROR, DATE_INPUT_HINT, parse_date_input
 from .page_support import add_path_row, open_directory
 from .runtime import TaskRegistry, ToolPaths, python_executable
 from .widgets import ToolPage
@@ -59,22 +59,16 @@ class TransactionInfoUpdatePage(ToolPage):
             command=self.choose_workbook,
             button_text="选择文件",
         )
-        ttk.Label(form, text="日前开始日期").grid(row=1, column=0, sticky="w", pady=4)
-        DateInput(form, textvariable=self.start_date, width=16).grid(
+        ttk.Label(form, text="日前日期范围").grid(row=1, column=0, sticky="w", pady=4)
+        DateRangeInput(form, start_variable=self.start_date, end_variable=self.end_date,
+                       start_optional=True, width=16).grid(
             row=1, column=1, sticky="w", pady=4
         )
         ttk.Label(
             form,
-            text="留空时自动从 Sheet1 最后日前日期+1接续",
-            style="Muted.TLabel",
-        ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=4)
-        ttk.Label(form, text="日前结束日期").grid(row=2, column=0, sticky="w", pady=4)
-        DateInput(form, textvariable=self.end_date, width=16).grid(
-            row=2, column=1, sticky="w", pady=4
-        )
-        ttk.Label(form, text=DATE_INPUT_HINT, style="Muted.TLabel").grid(
-            row=2, column=2, sticky="w", padx=(8, 0), pady=4
-        )
+            text="开始日期留空时自动从 Sheet1 最后日前日期+1接续；" + DATE_INPUT_HINT,
+            style="Muted.TLabel", wraplength=420,
+        ).grid(row=2, column=1, columnspan=3, sticky="w", pady=4)
         SettingCheckbutton(
             form, text="写入前生成时间戳备份", variable=self.create_backup
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(7, 0))

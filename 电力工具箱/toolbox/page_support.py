@@ -14,7 +14,7 @@ if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
 from .file_rules import clearing_file_date
 from toolbox_dates import DATE_INPUT_ERROR, DATE_INPUT_HINT, normalize_date_input, parse_date_input
-from toolbox_date_input import DateInput
+from toolbox_date_input import DateInput, DateRangeInput
 from toolbox_platform import open_path
 
 

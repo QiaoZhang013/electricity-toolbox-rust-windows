@@ -177,6 +177,44 @@ class PatchTests(unittest.TestCase):
         with self.assertRaisesRegex(UpdateError, '变化|不匹配'):
             self.delta.apply_patch(stage, archive, '1.0.1', '1.0.2')
 
+    def test_additional_source_backed_bytecode_is_removed_only_from_the_stage(self):
+        archive = self.patch()
+        cache = self.old / 'payload/app/__pycache__'
+        cache.mkdir()
+        bytecode = cache / '业务.cpython-312.pyc'
+        bytecode.write_bytes(b'generated cache')
+        before = self.delta.inventory(self.old)
+        prepared = self.delta.prepare_update(self.old, [(archive, '1.0.1', '1.0.2')], '1.0.2', self.root)
+        self.addCleanup(lambda: self.delta.cleanup_stage(prepared.staging_dir, self.old, prepared.token))
+        self.assertEqual(self.delta.inventory(prepared.staging_dir), self.delta.inventory(self.new))
+        self.assertFalse((prepared.staging_dir / 'payload/app/__pycache__').exists())
+        self.assertEqual(self.delta.inventory(self.old), before)
+        self.assertEqual(bytecode.read_bytes(), b'generated cache')
+        plan = json.loads(prepared.manifest.read_text(encoding='utf-8'))
+        self.assertEqual(plan['before'], before)
+        self.assertEqual(plan['after'], self.delta.inventory(self.new))
+
+    def test_added_cache_never_hides_modified_managed_code_or_unknown_files(self):
+        archive = self.patch()
+        for name in ('payload/app/__pycache__/orphan.cpython-312.pyc',
+                     'payload/app/__pycache__/业务.txt',
+                     'payload/app/业务.pyc'):
+            with self.subTest(name=name):
+                stage = self.root / ('unsafe-cache-' + str(len(list(self.root.iterdir()))))
+                self.delta.clone_installation(self.old, stage)
+                path = stage / name
+                path.parent.mkdir(exist_ok=True)
+                path.write_bytes(b'unknown extra')
+                with self.assertRaises(UpdateError):
+                    self.delta.apply_patch(stage, archive, '1.0.1', '1.0.2')
+        stage = self.root / 'modified-source-and-cache'
+        self.delta.clone_installation(self.old, stage)
+        (stage / 'payload/app/业务.py').write_bytes(b'changed code')
+        (stage / 'payload/app/__pycache__').mkdir()
+        (stage / 'payload/app/__pycache__/业务.cpython-312.pyc').write_bytes(b'cache')
+        with self.assertRaises(UpdateError):
+            self.delta.apply_patch(stage, archive, '1.0.1', '1.0.2')
+
     def test_archive_tampering_and_unsafe_entries_are_rejected(self):
         archive = self.patch()
         for extra in ('files/../escape', 'files/C:/bad', 'files/payload/app/CON.txt',
