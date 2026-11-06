@@ -20,7 +20,7 @@ class ReportTextTests(unittest.TestCase):
                 "loadInfo": {
                     "byType": {
                         code: {"actual": dict(empty_summary)}
-                        for code in ("1", "2", "18", "6")
+                        for code in ("1", "2", "3", "6")
                     }
                 },
                 "priceBoard": {

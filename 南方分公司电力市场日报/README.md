@@ -1,0 +1,38 @@
+# 南方分公司电力市场日报
+
+工具箱“分析与报告 → 南方分公司电力市场日报”。读取 D、D-1、D-2 三份收益表和清能系统市场数据，生成手机预览版与打印版 PDF。
+
+## 使用
+
+1. 选择三个输入，全部必选：
+   - `D 日收益表`：报告日 D 的收益表，报告日期按该表的日期自动识别；
+   - `D-1 日收益表`：D-1 的对比表；
+   - `D-2 日收益表`：D-2 的收益表。
+2. 报告日期不需要填写，界面按 `D 日收益表` 自动显示；更换 `D 日收益表` 会重新识别，日期变化时清空已补录内容。
+3. 需要补录市场数据时点“手动填写数据”，按自动识别的报告日期填写。
+4. 点击“生成日报”，完成后弹窗给出输出目录；也可点“打开输出目录”。
+
+市场数据从清能系统读取，复用工具箱的登录实现和统一账号。若账号未配置，先按[导出上网电量](../上网电量抓取/README.md)的登录说明完成配置。
+
+## 命令行
+
+```bash
+.venv/bin/python 南方分公司电力市场日报/run_market_report.py 2026-11-03 \
+  --day-report d.xlsx --previous-report d-1.xlsx --d2-report d-2.xlsx
+```
+
+可选 `--dongguan-operation`、`--realtime-maintenance` 补充材料，`--manual-market` 传入按日期绑定的补值 JSON（工具箱页面自动生成）。命令行仍显式传入报告日期，必须与 D 收益表日期一致，否则直接报错退出。
+
+## 输出
+
+`南方分公司电力市场日报/输出/<报告日期>/` 下两份 PDF：手机预览版（长页）和打印版。
+
+## 依赖
+
+`Jinja2`、`pypdf`，由 macOS 的 `./setup_macos.command` 或 Windows 的 `setup_windows.ps1` 安装。
+
+## 登录态与测试
+
+首次运行会复制“上网电量抓取”已有登录态，之后本模块使用独立的 `.state/auth_state.json`、锁和浏览器 profile，与其它工具互不影响。
+
+从 `电力工具箱/` 目录运行 `python -m unittest discover -s tests -p 'test_market_report_*.py'`；使用项目 `.venv` 解释器，并把仓库根目录加入 `PYTHONPATH`。设置 `TOOLBOX_REPORT_PDF_E2E=1` 可实际导出并回读两份 PDF，需要 Playwright Chromium。

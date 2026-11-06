@@ -17,7 +17,7 @@ APP_ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name in {"scripts", "\u811a\u672c"} e
 if str(APP_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(APP_ROOT.parent))
 from toolbox_storage import data_path
-from toolbox_dates import DATE_INPUT_ERROR, normalize_date_input, parse_date_input
+from toolbox_dates import DATE_INPUT_ERROR, date_from_filename, normalize_date_input, parse_date_input
 from toolbox_date_input import DateInput
 from toolbox_platform import open_path
 DOWNLOADS_DIR = Path.home() / "Downloads"
@@ -60,7 +60,7 @@ class ReportTool(tk.Tk):
         ttk.Label(root, text="只选择报告日期和三个 Excel 数据源", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor=tk.W)
         ttk.Label(
             root,
-            text="日期口径：报告日用于现货策略和日前出清段落；前一日预留给上网电量段落；前两日预留给日清分表。",
+            text="日期口径：报告日用于现货策略、日前出清和机组状态；前一日用于上网电量和机组对比；前两日用于日清分表及现货偏差分析。",
             wraplength=860,
         ).pack(anchor=tk.W, pady=(6, 12))
 
@@ -73,9 +73,9 @@ class ReportTool(tk.Tk):
 
         workbook_box = ttk.LabelFrame(root, text="Excel 数据源")
         workbook_box.pack(fill=tk.X, pady=(14, 8))
-        self._add_file_row(workbook_box, "前一日 Excel（上网电量预留）：", self.online_workbook, 0)
+        self._add_file_row(workbook_box, "前一日 Excel（上网电量）：", self.online_workbook, 0)
         self._add_file_row(workbook_box, "报告日 Excel（日前电量/日前价格）：", self.day_ahead_workbook, 1)
-        self._add_file_row(workbook_box, "前两日 Excel（日清分预留）：", self.daily_clearing_workbook, 2)
+        self._add_file_row(workbook_box, "前两日 Excel（日清分及偏差）：", self.daily_clearing_workbook, 2)
 
         template_box = ttk.LabelFrame(root, text="Word 模板")
         template_box.pack(fill=tk.X, pady=(4, 8))
@@ -164,13 +164,12 @@ class ReportTool(tk.Tk):
 
     @staticmethod
     def find_workbook_for_day(target_day: date) -> Path | None:
-        date_token = f"{target_day.year}.{target_day.month}.{target_day.day}"
         candidates = [
             path
             for path in DOWNLOADS_DIR.glob("*.xlsx")
             if not path.name.startswith("~$")
             and "出清情况" in path.name
-            and date_token in path.name
+            and date_from_filename(path.name) == target_day
         ]
         if not candidates:
             return None

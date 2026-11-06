@@ -8,12 +8,13 @@ import tempfile
 import tkinter as tk
 import unittest
 from contextlib import ExitStack, nullcontext
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from pypdf import PdfReader
+from openpyxl import Workbook
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "南方分公司电力市场日报"))
@@ -29,6 +30,16 @@ from toolbox import workflows
 
 
 DAY = date(2026, 10, 15)
+
+
+def write_report_workbook(path, report_day, *, previous=False):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "分公司" if previous else "新快报"
+    sheet["A2" if previous else "A6"] = report_day
+    workbook.save(path)
+    workbook.close()
+    return path
 
 
 def complete_manual():
@@ -79,8 +90,8 @@ class ManualKernelTests(unittest.TestCase):
                 for separator in ("：", ":", "\n"):
                     with self.subTest(title=title, prefix=prefix, separator=separator):
                         rows = _strategy_lines(f"{prefix}{title}{separator}策略总述。\n东莞厂也需要调整报价。\n3.东莞厂独立策略。")
-                        self.assertEqual([r["plant"] for r in rows], [title, "东莞厂"])
-                        self.assertEqual(_split_strategy_profit(rows[0])["plant"], "粤东区域")
+                        self.assertEqual([r["plant"] for r in rows], ["", "东莞厂"])
+                        self.assertEqual(_split_strategy_profit(rows[0])["plant"], "")
                         self.assertIn("东莞厂也需要调整报价", rows[0]["text"])
         notes = ["1、原始备注。", "注：含税（13%）口径。", "注:原始公式。"]
         table = {"column_widths": [42], "rows": [{"cells": [{"value": v}]} for v in ["电价", *notes]]}
@@ -250,10 +261,10 @@ class ManualUiTests(unittest.TestCase):
         editor.values["realtime"]["maintenance"]["comparison"].set("5")
         editor.save()
         with tempfile.TemporaryDirectory() as directory:
-            for name, variable in (("d", self.page.day_report), ("previous", self.page.previous_report),
-                                   ("d2", self.page.d2_report)):
-                source = Path(directory) / f"{name}.xlsx"
-                source.touch()
+            for index, (name, variable) in enumerate((("d", self.page.day_report), ("previous", self.page.previous_report),
+                                                     ("d2", self.page.d2_report))):
+                source = write_report_workbook(Path(directory) / f"{name}.xlsx", DAY - timedelta(days=index),
+                                               previous=index == 1)
                 variable.set(str(source))
             command = self.page.build_command()
         self.assertNotIn("--realtime-maintenance", command)
@@ -280,7 +291,9 @@ class ManualUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = [Path(directory) / f"{n}.xlsx" for n in range(3)]
             for path, var in zip(paths, (self.page.day_report, self.page.previous_report, self.page.d2_report)):
-                path.touch(); var.set(str(path.resolve()))
+                index = paths.index(path)
+                write_report_workbook(path, DAY - timedelta(days=index), previous=index == 1)
+                var.set(str(path.resolve()))
             command = self.page.build_command()
             values = {key: getattr(self.page, key).get() for key in (
                 "report_date", "day_report", "previous_report", "d2_report", "dongguan_operation", "realtime_maintenance", "manual_market")}
@@ -315,14 +328,16 @@ class ManualPdfTests(unittest.TestCase):
                   "day_ahead": {"cards": []}, "realtime": {"cards": []},
                   "operations": {"dates": [], "rows": []},
                   "appendices": {"day_ahead": table, "realtime": {"rows": [], "column_widths": []}},
-                  "strategies": [{"plant": "粤东区域运行策略研究", "text": "策略总述。"}]}
+                  "strategies": [{"plant": "汕头厂", "text": "策略总述。"}]}
         with tempfile.TemporaryDirectory() as directory:
             _, phone, printing = pipeline._render_concise_outputs(Path(directory), report, lambda _: None)
             self.assertEqual(len(PdfReader(phone).pages), 1)
             for output in (phone, printing):
                 text = "".join(page.extract_text() for page in PdfReader(output).pages)
-                self.assertIn("粤东区域", text)
-                self.assertNotIn("粤东区域运行策略研究", text)
+                import unicodedata
+                text = unicodedata.normalize("NFKC", text)
+                self.assertIn("汕头厂", text)
+                self.assertNotIn("粤东区域", text)
                 self.assertIn("-50", text)
                 self.assertIn("13%", text)
 

@@ -208,7 +208,8 @@ class CalendarInputTests(unittest.TestCase):
 
         for page_type, expected_count in (
             (OnlineEnergyPage, 1), (ReportPage, 1), (MarketTableUpdatePage, 1),
-            (GuangdongPricePage, 1), (MarketReportPage, 1), (SpotPriceUpdatePage, 2),
+            # Market daily derives its read-only date from the D workbook.
+            (GuangdongPricePage, 1), (MarketReportPage, 0), (SpotPriceUpdatePage, 2),
             (TransactionInfoUpdatePage, 2), (WindForecastPage, 1),
         ):
             with self.subTest(page=page_type.__name__):

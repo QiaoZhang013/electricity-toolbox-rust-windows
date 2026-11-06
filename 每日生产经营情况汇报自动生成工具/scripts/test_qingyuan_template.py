@@ -13,9 +13,9 @@ from generate_red_marked_report import (
     LOCAL_TEMPLATE_PATH,
     QINGYUAN_DAILY_CLEARING_VALUES,
     build_day_ahead_clearing_text,
+    clear_auto_section_red,
     ensure_daily_clearing_table_structure,
     ensure_qingyuan_template_content,
-    ensure_qingyuan_online_energy_text,
     ensure_spot_deviation_analysis,
     is_current_daily_clearing_table,
     load_day_ahead_clearing_summary,
@@ -65,7 +65,7 @@ class QingyuanTemplateTests(unittest.TestCase):
         )
         table = document.tables[0]
         self.assertTrue(is_current_daily_clearing_table(table))
-        self.assertEqual(len(table.columns), 18)
+        self.assertEqual(len(table.columns), 24)
         header_text = "".join(cell.text.replace("\n", "") for row in table.rows[:2] for cell in row.cells)
         for header in DAILY_CLEARING_REQUIRED_HEADERS:
             self.assertIn(header, header_text)
@@ -74,8 +74,8 @@ class QingyuanTemplateTests(unittest.TestCase):
         bias_index = paragraphs.index("3.现货偏差分析")
         forecast_index = paragraphs.index("五、短期市场预测")
         self.assertLess(bias_index, forecast_index)
-        self.assertTrue(paragraphs[bias_index + 1].startswith("分公司日前实时偏差"))
-        self.assertTrue(paragraphs[bias_index + 2].startswith("实际上网偏差"))
+        self.assertEqual(paragraphs[bias_index + 1], "日前-实时：")
+        self.assertEqual(paragraphs[bias_index + 3], "实际-实时：")
 
     def test_legacy_structure_is_upgraded_from_canonical_template(self) -> None:
         document = Document()
@@ -98,13 +98,8 @@ class QingyuanTemplateTests(unittest.TestCase):
         )
         online_text = document.paragraphs[heading_index + 1].text
         day_ahead_text = document.paragraphs[heading_index + 2].text
-        self.assertIn("、清远0万千瓦时；", online_text)
-        self.assertIn("、清远（计划）0万千瓦时；", day_ahead_text)
-
-        legacy_online = online_text.replace("、清远0万千瓦时", "")
-        upgraded_online = ensure_qingyuan_online_energy_text(legacy_online)
-        self.assertEqual(upgraded_online.count("清远0万千瓦时"), 1)
-        self.assertEqual(ensure_qingyuan_online_energy_text(upgraded_online), upgraded_online)
+        self.assertIn("清远", online_text)
+        self.assertIn("清远（计划）", day_ahead_text)
 
         company = {"energy": 0, "price": 0}
         summary = {
@@ -122,6 +117,63 @@ class QingyuanTemplateTests(unittest.TestCase):
         }
         generated = build_day_ahead_clearing_text("2026-08-12", summary)
         self.assertIn("、清远（计划）0万千瓦时；", generated)
+
+    def test_auto_generated_sections_lose_red_heading(self) -> None:
+        def red_runs(paragraph) -> list[str]:
+            return [
+                run.text
+                for run in paragraph.runs
+                if run.font.color and run.font.color.rgb
+                and str(run.font.color.rgb).upper() == "FF0000"
+            ]
+
+        document = Document(LOCAL_TEMPLATE_PATH)
+        strategy = next(p for p in document.paragraphs if p.text.strip() == "三、现货交易策略")
+        bias = next(p for p in document.paragraphs if p.text.strip() == "3.现货偏差分析")
+        self.assertTrue(red_runs(strategy))
+        self.assertTrue(red_runs(bias))
+
+        # 现货偏差分析取数失败时保留红字，提示仍需人工补数。
+        clear_auto_section_red(document, spot_filled=False)
+        self.assertEqual(red_runs(strategy), [])
+        self.assertTrue(red_runs(bias))
+
+        clear_auto_section_red(document, spot_filled=True)
+        self.assertEqual(red_runs(bias), [])
+
+    def test_day_ahead_total_includes_qingyuan_plan_energy(self) -> None:
+        # 口径已确认：日前出清总电量＝快报（日前）F7 火电口径 + 清远计划电量，
+        # 不能再退回「只报火电」的写法（人工稿曾写 6035，与分项对不上）。
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "出清情况（分公司2026.11.4).xlsx"
+            workbook = Workbook()
+            basic_info = workbook.active
+            basic_info.title = "基础信息"
+            basic_info["AA64"] = 0
+            basic_info["AC64"] = 2300
+            day_ahead = workbook.create_sheet("快报  (日前)")
+            for row, energy, price in ((7, 6034.8139, 236), (8, 1636, 539)):
+                day_ahead.cell(row, 6, energy)
+                day_ahead.cell(row, 7, price)
+            for row, label, energy, price in (
+                (25, "汕头海风", 452, 432),
+                (26, "鮀莲光伏", 39, 591),
+                (27, "归湖光伏", 33, 553),
+            ):
+                day_ahead.cell(row, 1, label)
+                day_ahead.cell(row, 7, energy)
+                day_ahead.cell(row, 8, price)
+            workbook.save(workbook_path)
+
+            summary = load_day_ahead_clearing_summary("2026-11-04", workbook_path)
+
+        self.assertAlmostEqual(summary["qingyuanSource"]["cells"]["AC64"], 2300)
+        self.assertAlmostEqual(summary["baseTotalEnergy"], 6034.8139)
+        self.assertAlmostEqual(summary["renewableEnergy"], 524)
+        self.assertAlmostEqual(summary["totalEnergy"], 6788.8139)
+        generated = build_day_ahead_clearing_text("2026-11-04", summary)
+        self.assertTrue(generated.startswith("11月4日分公司日前出清电量6789万千瓦时。"))
+        self.assertIn("、清远（计划）230万千瓦时；", generated)
 
     def test_qingyuan_day_ahead_energy_sums_basic_info_cells(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -152,16 +204,17 @@ class QingyuanTemplateTests(unittest.TestCase):
 
             summary = load_day_ahead_clearing_summary("2026-08-12", workbook_path)
 
-        self.assertEqual(summary["companies"]["清远"]["energy"], 20)
+        self.assertEqual(summary["companies"]["清远"]["energy"], 2)
         self.assertEqual(summary["baseTotalEnergy"], 100)
-        self.assertEqual(summary["totalEnergy"], 120)
+        self.assertEqual(summary["renewableEnergy"], 10)  # 海风 5 + 鮀莲 3 + 归湖 2
+        self.assertEqual(summary["totalEnergy"], 112)
         self.assertEqual(
             summary["qingyuanSource"],
             {"sheet": "基础信息", "cells": {"AA64": 12.4, "AC64": 7.6}},
         )
         generated = build_day_ahead_clearing_text("2026-08-12", summary)
-        self.assertTrue(generated.startswith("8月12日分公司日前出清电量120万千瓦时。"))
-        self.assertIn("、清远（计划）20万千瓦时；", generated)
+        self.assertTrue(generated.startswith("8月12日分公司日前出清电量112万千瓦时。"))
+        self.assertIn("、清远（计划）2万千瓦时；", generated)
 
 
 if __name__ == "__main__":

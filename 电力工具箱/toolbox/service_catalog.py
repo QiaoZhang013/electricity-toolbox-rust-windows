@@ -41,9 +41,8 @@ def desktop_catalog(paths):
                             ("haifeng", "海风", "2026年现货价格分析-海风.xlsx")]
                           for item in (workbook(key + "_workbook", label + "工作簿", name), f(key + "_selected", "更新" + label, "boolean", True))],
                         f("overwrite", "覆盖已有电价", "boolean", True), backup], [("run", "开始更新")]),
-        "market-report": ([f("report_date", "报告日期", "date", tomorrow), workbook("day_report", "d 日收益表"),
-                           workbook("previous_report", "上一日对比表（必选）"), workbook("d2_report", "d-2 收益表"),
-                           f("dongguan_operation", "东莞运行方式修正（可选）"), f("realtime_maintenance", "实时检修容量（可选，万千瓦）", "number"),
+        "market-report": ([workbook("day_report", "D 日收益表"),
+                           workbook("previous_report", "D-1 日收益表"), workbook("d2_report", "D-2 日收益表"),
                            f("manual_market", "市场补录（网站优先，手填补缺）", "json")], [("run", "生成日报")]),
         "report": ([f("report_date", "报告日期", "date", day), workbook("online_workbook", "前一日 Excel（上网电量）"),
                     workbook("day_ahead_workbook", "报告日 Excel（日前电量/价格）"), workbook("daily_workbook", "前两日 Excel（日清数据）"),

@@ -31,3 +31,19 @@ def parse_date_input(value: str) -> date:
 
 def normalize_date_input(value: str) -> str:
     return parse_date_input(value).isoformat()
+
+
+def date_from_filename(filename: str) -> date | None:
+    """Read a complete year-first date, never treating 11.10 as 11.1."""
+    patterns = (
+        r"(?<!\d)(20\d{2})[.\-_/年](\d{1,2})[.\-_/月](\d{1,2})(?!\d)",
+        r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, filename)
+        if match:
+            try:
+                return date(*(int(part) for part in match.groups()))
+            except ValueError:
+                return None
+    return None
